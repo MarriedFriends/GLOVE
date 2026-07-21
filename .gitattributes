@@ -1,0 +1,14 @@
+# Normalize all text files to LF line endings inside the repo.
+# This prevents the "whole file looks changed" noise when Mac and Windows
+# users edit the same files. Editors on Windows handle LF fine.
+* text=auto eol=lf
+
+# Binary files — git must never touch their bytes.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.woff  binary
+*.woff2 binary

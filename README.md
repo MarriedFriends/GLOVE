@@ -1,6 +1,6 @@
-# Campus Social
+# Glove
 
-A social app for university communities, built with **Next.js 16**, **React 19**, **TypeScript**, **Tailwind CSS v4**, and **Supabase**.
+An anonymous chat & dating app for university students, built with **Next.js 16**, **React 19**, **TypeScript**, **Tailwind CSS v4**, and **Supabase**.
 
 ## Setup
 

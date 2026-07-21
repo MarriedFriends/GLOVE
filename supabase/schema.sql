@@ -1,4 +1,4 @@
--- Campus Social — schema for an anonymous chat & dating app for students.
+-- Glove — schema for an anonymous chat & dating app for students.
 --
 -- Run in the Supabase SQL editor (or `supabase db push`). This script is
 -- re-runnable: policies are dropped before being recreated.
@@ -18,20 +18,75 @@ drop table if exists public.posts cascade;
 -- profiles: the anonymous, public-facing identity used for matching & chat.
 -- ===========================================================================
 create table if not exists public.profiles (
-  id            uuid primary key references auth.users (id) on delete cascade,
-  handle        text unique not null,                 -- anonymous display name
-  university    text,                                  -- derived from email domain
-  gender        text check (gender in ('male', 'female', 'nonbinary', 'other')),
-  interested_in text check (interested_in in ('male', 'female', 'everyone')),
-  birth_year    int  check (birth_year between 1950 and 2015),
-  bio           text check (char_length(bio) <= 500),
-  avatar_url    text,
-  is_verified   boolean not null default false,        -- confirmed student email
-  is_active     boolean not null default true,         -- shown in discovery
-  created_at    timestamptz not null default now()
+  id             uuid primary key references auth.users (id) on delete cascade,
+  handle         text unique not null,                 -- anonymous display name
+  university     text,                                  -- derived from email domain
+  gender         text check (gender in ('male', 'female', 'nonbinary', 'other')),
+  interested_in  text check (interested_in in ('male', 'female', 'everyone')),
+  birth_year     int  check (birth_year between 1950 and 2015),
+  admission_year int  check (admission_year between 2000 and 2035),  -- 학번 (e.g. 2023 = 23학번)
+  height_range   text check (height_range in
+                   ('~150','151~155','156~160','161~165','166~170',
+                    '171~175','176~180','181~185','186~190','190~')),
+  face_type      text check (face_type in
+                   ('dog','cat','fox','snake','mouse','bear','rabbit')),
+  mbti           text check (mbti ~ '^[IE][NS][TF][PJ]$'),
+  hobbies        text[] not null default '{}',
+  bio            text check (char_length(bio) <= 500),
+  avatar_url     text,
+  is_verified    boolean not null default false,        -- confirmed student email
+  is_active      boolean not null default true,         -- shown in discovery
+  created_at     timestamptz not null default now()
 );
+
+-- Survey columns added after the first release — bring existing databases up
+-- to date. (ADD COLUMN IF NOT EXISTS is a no-op when the column exists.)
+alter table public.profiles
+  add column if not exists admission_year int check (admission_year between 2000 and 2035),
+  add column if not exists height_range text check (height_range in
+    ('~150','151~155','156~160','161~165','166~170',
+     '171~175','176~180','181~185','186~190','190~')),
+  add column if not exists face_type text check (face_type in
+    ('dog','cat','fox','snake','mouse','bear','rabbit')),
+  add column if not exists mbti text check (mbti ~ '^[IE][NS][TF][PJ]$'),
+  add column if not exists hobbies text[] not null default '{}';
 -- A profile is "onboarded" (ready for discovery) once gender + interested_in
 -- are set. The matching attributes are NULL until the user completes onboarding.
+
+-- ===========================================================================
+-- match_preferences: what a user is looking for (the "찾기" wizard answers).
+-- One row per (user, mode) so a future friend-finding mode needs no migration.
+-- height indexes refer to the HEIGHT_BUCKETS list in
+-- src/lib/onboarding-options.ts (0 = '~150' … 9 = '190~').
+-- ===========================================================================
+create table if not exists public.match_preferences (
+  user_id            uuid not null references public.profiles (id) on delete cascade,
+  mode               text not null default 'date' check (mode in ('date', 'friend')),
+  min_age            int not null check (min_age between 19 and 30),
+  max_age            int not null check (max_age between 19 and 30),
+  min_admission_year int not null check (min_admission_year between 2000 and 2035),
+  max_admission_year int not null check (max_admission_year between 2000 and 2035),
+  same_university    boolean not null default true,
+  min_height_idx     int not null check (min_height_idx between 0 and 9),
+  max_height_idx     int not null check (max_height_idx between 0 and 9),
+  face_types         text[] not null default '{}',
+  hobby              text,
+  intro              text not null check (char_length(intro) between 10 and 80),
+  updated_at         timestamptz not null default now(),
+  primary key (user_id, mode),
+  check (min_age <= max_age),
+  check (min_admission_year <= max_admission_year),
+  check (min_height_idx <= max_height_idx)
+);
+
+alter table public.match_preferences enable row level security;
+
+drop policy if exists "Manage own preferences" on public.match_preferences;
+create policy "Manage own preferences"
+  on public.match_preferences for all
+  to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()));
 
 -- ===========================================================================
 -- likes: directional swipe. A mutual positive like creates a match (trigger).
@@ -289,6 +344,122 @@ drop trigger if exists on_like_created on public.likes;
 create trigger on_like_created
   after insert on public.likes
   for each row execute function public.handle_like();
+
+-- ===========================================================================
+-- Matching: find_candidates() — the "AI 매칭" level-1 engine.
+--
+-- Runs entirely server-side (security definer) because it must read other
+-- users' private match_preferences to apply mutual filters; it returns ONLY
+-- anonymous, safe-to-show fields plus a compatibility score (max 100):
+--   +30  candidate's face type is one I want
+--   +30  shared hobbies (10 per overlap, capped)
+--   +20  MBTI chemistry (same N/S +8; complementary E/I, T/F, P/J +4 each)
+--   +20  I also satisfy THEIR saved filters (mutual fit)
+-- ===========================================================================
+create or replace function public.find_candidates(max_results int default 5)
+returns table (
+  candidate_id   uuid,
+  handle         text,
+  university     text,
+  age            int,
+  admission_year int,
+  height_range   text,
+  face_type      text,
+  mbti           text,
+  hobbies        text[],
+  intro          text,
+  score          int
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with height_order as (
+    select array['~150','151~155','156~160','161~165','166~170',
+                 '171~175','176~180','181~185','186~190','190~']::text[] as arr
+  ),
+  me as (
+    select p.id, p.gender, p.university, p.birth_year, p.admission_year,
+           p.height_range, p.face_type, p.mbti, p.hobbies,
+           mp.min_age, mp.max_age, mp.min_admission_year, mp.max_admission_year,
+           mp.same_university, mp.min_height_idx, mp.max_height_idx,
+           mp.face_types as pref_faces
+    from public.profiles p
+    join public.match_preferences mp
+      on mp.user_id = p.id and mp.mode = 'date'
+    where p.id = (select auth.uid())
+  )
+  select
+    c.id,
+    c.handle,
+    c.university,
+    extract(year from now())::int - c.birth_year,
+    c.admission_year,
+    c.height_range,
+    c.face_type,
+    c.mbti,
+    c.hobbies,
+    cmp.intro,
+    (
+      case when c.face_type = any(me.pref_faces) then 30 else 0 end
+      + least(30, 10 * (select count(*)::int
+                        from unnest(me.hobbies) as mh
+                        where mh = any(c.hobbies)))
+      + case when substr(me.mbti, 2, 1) = substr(c.mbti, 2, 1) then 8 else 0 end
+      + case when substr(me.mbti, 1, 1) <> substr(c.mbti, 1, 1) then 4 else 0 end
+      + case when substr(me.mbti, 3, 1) <> substr(c.mbti, 3, 1) then 4 else 0 end
+      + case when substr(me.mbti, 4, 1) <> substr(c.mbti, 4, 1) then 4 else 0 end
+      + case when cmp.user_id is not null
+              and (extract(year from now())::int - me.birth_year)
+                    between cmp.min_age and cmp.max_age
+              and me.admission_year
+                    between cmp.min_admission_year and cmp.max_admission_year
+              and (array_position(h.arr, me.height_range) - 1)
+                    between cmp.min_height_idx and cmp.max_height_idx
+              and (not cmp.same_university or me.university = c.university)
+             then 20 else 0 end
+    )::int
+  from me
+  cross join height_order h
+  join public.profiles c on c.id <> me.id
+  left join public.match_preferences cmp
+    on cmp.user_id = c.id and cmp.mode = 'date'
+  where c.is_active
+    and c.birth_year is not null
+    and c.admission_year is not null
+    and c.height_range is not null
+    and c.face_type is not null
+    and c.mbti is not null
+    and ((me.gender = 'male' and c.gender = 'female')
+      or (me.gender = 'female' and c.gender = 'male'))
+    and (extract(year from now())::int - c.birth_year)
+          between me.min_age and me.max_age
+    and c.admission_year
+          between me.min_admission_year and me.max_admission_year
+    and (array_position(h.arr, c.height_range) - 1)
+          between me.min_height_idx and me.max_height_idx
+    and (not me.same_university or c.university = me.university)
+    and not exists (
+      select 1 from public.blocks b
+      where (b.blocker_id = me.id and b.blocked_id = c.id)
+         or (b.blocker_id = c.id and b.blocked_id = me.id)
+    )
+    and not exists (
+      select 1 from public.likes l
+      where l.liker_id = me.id and l.likee_id = c.id
+    )
+    and not exists (
+      select 1 from public.matches m
+      where m.user_low = least(me.id, c.id)
+        and m.user_high = greatest(me.id, c.id)
+    )
+  order by 11 desc, c.created_at desc
+  limit max_results
+$$;
+
+revoke execute on function public.find_candidates(int) from public, anon;
+grant execute on function public.find_candidates(int) to authenticated;
 
 -- ===========================================================================
 -- Realtime: stream new chat messages to connected clients.

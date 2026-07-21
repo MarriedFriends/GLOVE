@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Campus Social",
-  description: "A social app for university communities.",
+  title: "Glove",
+  description: "익명으로 만나는 대학생 소개팅 — Glove",
 };
 
 export default function RootLayout({

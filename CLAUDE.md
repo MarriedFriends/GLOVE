@@ -1,6 +1,6 @@
 @AGENTS.md
 
-# Campus Social
+# Glove
 
 An **anonymous chat & dating (matchmaking) app for university students**. The
 core experience is: students match with each other and chat anonymously — real

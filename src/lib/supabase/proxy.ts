@@ -46,7 +46,7 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   // Example gate: redirect unauthenticated users away from protected routes.
-  // Adjust the allowlist to fit the campus-social app's public pages.
+  // Adjust the allowlist to fit Glove's public pages.
   const { pathname } = request.nextUrl;
   const isPublicRoute =
     pathname === "/" ||

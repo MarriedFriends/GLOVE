@@ -19,6 +19,14 @@ export type Json =
 
 export type Gender = "male" | "female" | "nonbinary" | "other";
 export type Preference = "male" | "female" | "everyone";
+export type FaceType =
+  | "dog"
+  | "cat"
+  | "fox"
+  | "snake"
+  | "mouse"
+  | "bear"
+  | "rabbit";
 export type MatchStatus = "active" | "unmatched";
 export type ReportReason =
   | "harassment"
@@ -38,6 +46,11 @@ export interface Database {
           gender: Gender | null;
           interested_in: Preference | null;
           birth_year: number | null;
+          admission_year: number | null;
+          height_range: string | null;
+          face_type: FaceType | null;
+          mbti: string | null;
+          hobbies: string[];
           bio: string | null;
           avatar_url: string | null;
           is_verified: boolean;
@@ -51,6 +64,11 @@ export interface Database {
           gender?: Gender | null;
           interested_in?: Preference | null;
           birth_year?: number | null;
+          admission_year?: number | null;
+          height_range?: string | null;
+          face_type?: FaceType | null;
+          mbti?: string | null;
+          hobbies?: string[];
           bio?: string | null;
           avatar_url?: string | null;
           is_verified?: boolean;
@@ -64,6 +82,11 @@ export interface Database {
           gender?: Gender | null;
           interested_in?: Preference | null;
           birth_year?: number | null;
+          admission_year?: number | null;
+          height_range?: string | null;
+          face_type?: FaceType | null;
+          mbti?: string | null;
+          hobbies?: string[];
           bio?: string | null;
           avatar_url?: string | null;
           is_verified?: boolean;
@@ -71,6 +94,61 @@ export interface Database {
           created_at?: string;
         };
         Relationships: [];
+      };
+      match_preferences: {
+        Row: {
+          user_id: string;
+          mode: "date" | "friend";
+          min_age: number;
+          max_age: number;
+          min_admission_year: number;
+          max_admission_year: number;
+          same_university: boolean;
+          min_height_idx: number;
+          max_height_idx: number;
+          face_types: string[];
+          hobby: string | null;
+          intro: string;
+          updated_at: string;
+        };
+        Insert: {
+          user_id: string;
+          mode?: "date" | "friend";
+          min_age: number;
+          max_age: number;
+          min_admission_year: number;
+          max_admission_year: number;
+          same_university?: boolean;
+          min_height_idx: number;
+          max_height_idx: number;
+          face_types?: string[];
+          hobby?: string | null;
+          intro: string;
+          updated_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          mode?: "date" | "friend";
+          min_age?: number;
+          max_age?: number;
+          min_admission_year?: number;
+          max_admission_year?: number;
+          same_university?: boolean;
+          min_height_idx?: number;
+          max_height_idx?: number;
+          face_types?: string[];
+          hobby?: string | null;
+          intro?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "match_preferences_user_id_fkey";
+            columns: ["user_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
       };
       likes: {
         Row: {
@@ -253,7 +331,24 @@ export interface Database {
       };
     };
     Views: Record<never, never>;
-    Functions: Record<never, never>;
+    Functions: {
+      find_candidates: {
+        Args: { max_results?: number };
+        Returns: {
+          candidate_id: string;
+          handle: string;
+          university: string | null;
+          age: number;
+          admission_year: number;
+          height_range: string;
+          face_type: FaceType;
+          mbti: string;
+          hobbies: string[];
+          intro: string | null;
+          score: number;
+        }[];
+      };
+    };
     Enums: Record<never, never>;
     CompositeTypes: Record<never, never>;
   };
