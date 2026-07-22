@@ -18,8 +18,9 @@ export default async function Home() {
   let profile = null;
   let hasDatePrefs = false;
   let matchCount = 0;
+  let incomingLikes = 0;
   if (user) {
-    const [profileRes, prefsRes, matchRes] = await Promise.all([
+    const [profileRes, prefsRes, matchRes, likesRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase
         .from("match_preferences")
@@ -27,15 +28,27 @@ export default async function Home() {
         .eq("user_id", user.id)
         .eq("mode", "date")
         .maybeSingle(),
+      supabase.from("matches").select("user_low, user_high, status"),
       supabase
-        .from("matches")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "active"),
+        .from("likes")
+        .select("liker_id")
+        .eq("likee_id", user.id)
+        .eq("is_like", true),
     ]);
     profile = profileRes.data;
     if (!isProfileComplete(profile)) redirect("/onboarding");
     hasDatePrefs = Boolean(prefsRes.data);
-    matchCount = matchRes.count ?? 0;
+
+    const matches = matchRes.data ?? [];
+    matchCount = matches.filter((m) => m.status === "active").length;
+
+    // Incoming likes that haven't already turned into a match.
+    const matchedIds = new Set(
+      matches.flatMap((m) => [m.user_low, m.user_high]),
+    );
+    incomingLikes = (likesRes.data ?? []).filter(
+      (l) => !matchedIds.has(l.liker_id),
+    ).length;
   }
 
   const supabaseConfigured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
@@ -88,17 +101,30 @@ export default async function Home() {
               </div>
             </div>
 
-            <Link
-              href="/matches"
-              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-black/[.08] bg-white/60 px-4 py-3.5 text-sm font-semibold text-zinc-700 transition-colors hover:border-rose-300 dark:border-white/[.12] dark:bg-white/[.03] dark:text-zinc-200 dark:hover:border-rose-700"
-            >
-              💬 내 매칭
-              {matchCount > 0 && (
-                <span className="rounded-full bg-rose-500 px-2 py-0.5 text-xs font-bold text-white">
-                  {matchCount}
-                </span>
-              )}
-            </Link>
+            <div className="grid w-full grid-cols-2 gap-3">
+              <Link
+                href="/likes"
+                className="flex items-center justify-center gap-2 rounded-2xl border border-black/[.08] bg-white/60 px-4 py-3.5 text-sm font-semibold text-zinc-700 transition-colors hover:border-rose-300 dark:border-white/[.12] dark:bg-white/[.03] dark:text-zinc-200 dark:hover:border-rose-700"
+              >
+                💌 받은 좋아요
+                {incomingLikes > 0 && (
+                  <span className="rounded-full bg-rose-500 px-2 py-0.5 text-xs font-bold text-white">
+                    {incomingLikes}
+                  </span>
+                )}
+              </Link>
+              <Link
+                href="/matches"
+                className="flex items-center justify-center gap-2 rounded-2xl border border-black/[.08] bg-white/60 px-4 py-3.5 text-sm font-semibold text-zinc-700 transition-colors hover:border-rose-300 dark:border-white/[.12] dark:bg-white/[.03] dark:text-zinc-200 dark:hover:border-rose-700"
+              >
+                💬 내 매칭
+                {matchCount > 0 && (
+                  <span className="rounded-full bg-rose-500 px-2 py-0.5 text-xs font-bold text-white">
+                    {matchCount}
+                  </span>
+                )}
+              </Link>
+            </div>
 
             <div className="w-full rounded-2xl border border-black/[.08] bg-white/60 p-5 text-left dark:border-white/[.12] dark:bg-white/[.03]">
               <div className="flex items-center gap-3">

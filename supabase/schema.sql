@@ -194,8 +194,9 @@ create policy "Update own profile"
   with check (id = (select auth.uid()));
 
 -- --- likes ----------------------------------------------------------------
--- You can create your own likes and see only the ones you sent. You must NOT
--- be able to see who liked you before a match forms.
+-- You can create your own likes, see the ones you sent, and see the ones you
+-- RECEIVED (so you can accept them — this reveals the liker to the recipient,
+-- a deliberate product decision).
 drop policy if exists "Create own likes" on public.likes;
 create policy "Create own likes"
   on public.likes for insert
@@ -207,6 +208,12 @@ create policy "Read own likes"
   on public.likes for select
   to authenticated
   using (liker_id = (select auth.uid()));
+
+drop policy if exists "Read likes received" on public.likes;
+create policy "Read likes received"
+  on public.likes for select
+  to authenticated
+  using (likee_id = (select auth.uid()) and is_like);
 
 -- --- matches --------------------------------------------------------------
 -- Only participants can see a match. There is intentionally no INSERT policy:
@@ -517,12 +524,22 @@ begin
   if existing < 3 then
     insert into public.daily_picks (user_id, pick_date, candidate_id, score)
     select uid, today, fc.candidate_id, fc.score
-    from public.find_candidates(10) fc
+    from public.find_candidates(50) fc
     where fc.candidate_id not in (
       select dp2.candidate_id
       from public.daily_picks dp2
       where dp2.user_id = uid and dp2.pick_date = today
     )
+    -- People who already liked me jump the queue (they stay anonymous —
+    -- they simply appear among my daily picks), then highest score first.
+    order by
+      exists (
+        select 1 from public.likes l
+        where l.liker_id = fc.candidate_id
+          and l.likee_id = uid
+          and l.is_like
+      ) desc,
+      fc.score desc
     limit (3 - existing)
     on conflict do nothing;
   end if;
