@@ -13,33 +13,29 @@ export default async function Home() {
   } = await supabase.auth.getUser();
 
   // Logged in but hasn't finished the survey → send them there.
+  // The three queries are independent — run them in parallel (one round trip
+  // of latency instead of three).
   let profile = null;
   let hasDatePrefs = false;
-  if (user) {
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single();
-    profile = data;
-    if (!isProfileComplete(profile)) redirect("/onboarding");
-
-    const { data: prefs } = await supabase
-      .from("match_preferences")
-      .select("user_id")
-      .eq("user_id", user.id)
-      .eq("mode", "date")
-      .maybeSingle();
-    hasDatePrefs = Boolean(prefs);
-  }
-
   let matchCount = 0;
   if (user) {
-    const { count } = await supabase
-      .from("matches")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "active");
-    matchCount = count ?? 0;
+    const [profileRes, prefsRes, matchRes] = await Promise.all([
+      supabase.from("profiles").select("*").eq("id", user.id).single(),
+      supabase
+        .from("match_preferences")
+        .select("user_id")
+        .eq("user_id", user.id)
+        .eq("mode", "date")
+        .maybeSingle(),
+      supabase
+        .from("matches")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "active"),
+    ]);
+    profile = profileRes.data;
+    if (!isProfileComplete(profile)) redirect("/onboarding");
+    hasDatePrefs = Boolean(prefsRes.data);
+    matchCount = matchRes.count ?? 0;
   }
 
   const supabaseConfigured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);

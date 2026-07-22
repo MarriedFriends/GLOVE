@@ -22,23 +22,26 @@ export default async function MatchesPage() {
     m.user_low === user.id ? m.user_high : m.user_low,
   );
 
-  const { data: profiles } = otherIds.length
-    ? await supabase
-        .from("profiles")
-        .select("id, handle, face_type, mbti")
-        .in("id", otherIds)
-    : { data: [] };
-
-  // Latest message per match for the preview line.
+  // Profiles and message previews are independent — fetch in parallel.
   const matchIds = (matches ?? []).map((m) => m.id);
-  const { data: lastMessages } = matchIds.length
-    ? await supabase
-        .from("messages")
-        .select("match_id, content, created_at")
-        .in("match_id", matchIds)
-        .order("created_at", { ascending: false })
-        .limit(100)
-    : { data: [] };
+  const [profilesRes, lastMessagesRes] = await Promise.all([
+    otherIds.length
+      ? supabase
+          .from("profiles")
+          .select("id, handle, face_type, mbti")
+          .in("id", otherIds)
+      : Promise.resolve({ data: [] }),
+    matchIds.length
+      ? supabase
+          .from("messages")
+          .select("match_id, content, created_at")
+          .in("match_id", matchIds)
+          .order("created_at", { ascending: false })
+          .limit(100)
+      : Promise.resolve({ data: [] }),
+  ]);
+  const profiles = profilesRes.data;
+  const lastMessages = lastMessagesRes.data;
 
   const rows = (matches ?? []).map((m) => {
     const otherId = m.user_low === user.id ? m.user_high : m.user_low;

@@ -18,25 +18,30 @@ export default async function DiscoverPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("gender, admission_year, height_range, face_type, mbti")
-    .eq("id", user.id)
-    .single();
-  if (!isProfileComplete(profile)) redirect("/onboarding");
+  // Independent queries — run in parallel to cut page latency.
+  const [profileRes, prefsRes, candidatesRes] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("gender, admission_year, height_range, face_type, mbti")
+      .eq("id", user.id)
+      .single(),
+    supabase
+      .from("match_preferences")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("mode", "date")
+      .maybeSingle(),
+    supabase.rpc("get_daily_candidates"),
+  ]);
+
+  if (!isProfileComplete(profileRes.data)) redirect("/onboarding");
 
   // No saved preferences yet → set them up first. (Full row: the list view
   // compares each candidate against these conditions to highlight matches.)
-  const { data: prefs } = await supabase
-    .from("match_preferences")
-    .select("*")
-    .eq("user_id", user.id)
-    .eq("mode", "date")
-    .maybeSingle();
+  const prefs = prefsRes.data;
   if (!prefs) redirect("/find");
 
-  const { data: candidates, error: rpcError } =
-    await supabase.rpc("get_daily_candidates");
+  const { data: candidates, error: rpcError } = candidatesRes;
 
   return (
     <div className="flex flex-1 justify-center bg-gradient-to-b from-rose-50 via-white to-white px-6 py-12 font-sans dark:from-rose-950/30 dark:via-black dark:to-black">

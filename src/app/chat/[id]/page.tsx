@@ -27,18 +27,21 @@ export default async function ChatPage({
   if (!match || match.status !== "active") redirect("/matches");
 
   const otherId = match.user_low === user.id ? match.user_high : match.user_low;
-  const { data: other } = await supabase
-    .from("profiles")
-    .select("handle, face_type")
-    .eq("id", otherId)
-    .maybeSingle();
-
-  const { data: messages } = await supabase
-    .from("messages")
-    .select("*")
-    .eq("match_id", match.id)
-    .order("created_at", { ascending: true })
-    .limit(200);
+  const [otherRes, messagesRes] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("handle, face_type")
+      .eq("id", otherId)
+      .maybeSingle(),
+    supabase
+      .from("messages")
+      .select("*")
+      .eq("match_id", match.id)
+      .order("created_at", { ascending: true })
+      .limit(200),
+  ]);
+  const other = otherRes.data;
+  const messages = messagesRes.data;
 
   const emoji =
     FACE_OPTIONS.find((o) => o.value === other?.face_type)?.emoji ?? "🙂";
