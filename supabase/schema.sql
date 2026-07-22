@@ -462,6 +462,101 @@ revoke execute on function public.find_candidates(int) from public, anon;
 grant execute on function public.find_candidates(int) to authenticated;
 
 -- ===========================================================================
+-- Daily picks: each user gets exactly 3 candidates per day, fixed until the
+-- next 9:00 AM KST refresh. get_daily_candidates() generates (or tops up to)
+-- today's set on first call of the day and returns the same set afterwards.
+-- ===========================================================================
+create table if not exists public.daily_picks (
+  user_id      uuid not null references public.profiles (id) on delete cascade,
+  pick_date    date not null,                       -- key of the 9AM~9AM window
+  candidate_id uuid not null references public.profiles (id) on delete cascade,
+  score        int  not null default 0,
+  created_at   timestamptz not null default now(),
+  primary key (user_id, pick_date, candidate_id)
+);
+
+alter table public.daily_picks enable row level security;
+
+drop policy if exists "Read own picks" on public.daily_picks;
+create policy "Read own picks"
+  on public.daily_picks for select
+  to authenticated
+  using (user_id = (select auth.uid()));
+-- No INSERT policy: rows are written only by the security-definer function.
+
+create or replace function public.get_daily_candidates()
+returns table (
+  candidate_id   uuid,
+  handle         text,
+  university     text,
+  age            int,
+  admission_year int,
+  height_range   text,
+  face_type      text,
+  mbti           text,
+  hobbies        text[],
+  intro          text,
+  score          int,
+  liked          boolean
+)
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  -- The "day" flips at 09:00 Asia/Seoul: subtract 9h from KST local time.
+  today date := ((now() at time zone 'Asia/Seoul') - interval '9 hours')::date;
+  existing int;
+begin
+  select count(*) into existing
+  from public.daily_picks dp
+  where dp.user_id = uid and dp.pick_date = today;
+
+  if existing < 3 then
+    insert into public.daily_picks (user_id, pick_date, candidate_id, score)
+    select uid, today, fc.candidate_id, fc.score
+    from public.find_candidates(10) fc
+    where fc.candidate_id not in (
+      select dp2.candidate_id
+      from public.daily_picks dp2
+      where dp2.user_id = uid and dp2.pick_date = today
+    )
+    limit (3 - existing)
+    on conflict do nothing;
+  end if;
+
+  return query
+  select
+    dp.candidate_id,
+    c.handle,
+    c.university,
+    extract(year from now())::int - c.birth_year,
+    c.admission_year,
+    c.height_range,
+    c.face_type,
+    c.mbti,
+    c.hobbies,
+    cmp.intro,
+    dp.score,
+    exists (
+      select 1 from public.likes l
+      where l.liker_id = uid and l.likee_id = dp.candidate_id and l.is_like
+    )
+  from public.daily_picks dp
+  join public.profiles c on c.id = dp.candidate_id
+  left join public.match_preferences cmp
+    on cmp.user_id = dp.candidate_id and cmp.mode = 'date'
+  where dp.user_id = uid and dp.pick_date = today
+  order by dp.score desc;
+end;
+$$;
+
+revoke execute on function public.get_daily_candidates() from public, anon;
+grant execute on function public.get_daily_candidates() to authenticated;
+
+-- ===========================================================================
 -- Realtime: stream new chat messages to connected clients.
 -- ===========================================================================
 do $$

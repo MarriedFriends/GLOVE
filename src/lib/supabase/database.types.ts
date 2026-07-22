@@ -150,6 +150,43 @@ export interface Database {
           },
         ];
       };
+      daily_picks: {
+        Row: {
+          user_id: string;
+          pick_date: string;
+          candidate_id: string;
+          score: number;
+          created_at: string;
+        };
+        Insert: {
+          user_id: string;
+          pick_date: string;
+          candidate_id: string;
+          score?: number;
+          created_at?: string;
+        };
+        Update: {
+          user_id?: string;
+          pick_date?: string;
+          candidate_id?: string;
+          score?: number;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "daily_picks_user_id_fkey";
+            columns: ["user_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "daily_picks_candidate_id_fkey";
+            columns: ["candidate_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       likes: {
         Row: {
           liker_id: string;
@@ -332,6 +369,23 @@ export interface Database {
     };
     Views: Record<never, never>;
     Functions: {
+      get_daily_candidates: {
+        Args: Record<string, never>;
+        Returns: {
+          candidate_id: string;
+          handle: string;
+          university: string | null;
+          age: number;
+          admission_year: number;
+          height_range: string;
+          face_type: FaceType;
+          mbti: string;
+          hobbies: string[];
+          intro: string | null;
+          score: number;
+          liked: boolean;
+        }[];
+      };
       find_candidates: {
         Args: { max_results?: number };
         Returns: {

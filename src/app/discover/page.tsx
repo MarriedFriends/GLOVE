@@ -35,10 +35,8 @@ export default async function DiscoverPage({
     .maybeSingle();
   if (!prefs) redirect("/find");
 
-  const { data: candidates, error: rpcError } = await supabase.rpc(
-    "find_candidates",
-    { max_results: 3 },
-  );
+  const { data: candidates, error: rpcError } =
+    await supabase.rpc("get_daily_candidates");
 
   return (
     <div className="flex flex-1 justify-center bg-gradient-to-b from-rose-50 via-white to-white px-6 py-12 font-sans dark:from-rose-950/30 dark:via-black dark:to-black">
@@ -68,8 +66,14 @@ export default async function DiscoverPage({
               {matched} 님과 매칭됐어요!
             </p>
             <p className="mt-1 text-sm text-rose-100">
-              서로 좋아요를 눌렀어요. 채팅 기능이 곧 열릴 예정이에요 💬
+              서로 좋아요를 눌렀어요!
             </p>
+            <Link
+              href="/matches"
+              className="mt-3 inline-block rounded-full bg-white px-5 py-2 text-sm font-bold text-rose-500"
+            >
+              💬 지금 채팅하러 가기
+            </Link>
           </div>
         )}
 
@@ -92,11 +96,11 @@ export default async function DiscoverPage({
           <div className="rounded-2xl border border-black/[.08] bg-white/60 p-8 text-center dark:border-white/[.12] dark:bg-white/[.03]">
             <p className="text-4xl">🔭</p>
             <p className="mt-3 font-semibold text-zinc-900 dark:text-white">
-              조건에 맞는 상대가 아직 없어요
+              오늘은 조건에 맞는 상대를 찾지 못했어요
             </p>
             <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-              나이·키 범위를 넓히거나 &ldquo;다른 학교도 좋아요&rdquo;로 바꾸면
-              더 많은 상대를 만날 수 있어요.
+              내일 아침 9시에 다시 찾아드릴게요. 나이·키 범위를 넓히거나
+              &ldquo;다른 학교도 좋아요&rdquo;로 바꾸면 만날 확률이 올라가요.
             </p>
             <Link
               href="/find"
@@ -108,7 +112,7 @@ export default async function DiscoverPage({
         ) : (
           <>
             <p className="mb-4 text-center text-sm text-zinc-500 dark:text-zinc-400">
-              배너를 누르면 상세 정보를 볼 수 있어요
+              매일 아침 9시, 새로운 3명이 찾아와요 · 배너를 누르면 상세 정보
             </p>
             <DiscoverList candidates={candidates} prefs={prefs} />
           </>

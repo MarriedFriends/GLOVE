@@ -33,6 +33,15 @@ export default async function Home() {
     hasDatePrefs = Boolean(prefs);
   }
 
+  let matchCount = 0;
+  if (user) {
+    const { count } = await supabase
+      .from("matches")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "active");
+    matchCount = count ?? 0;
+  }
+
   const supabaseConfigured = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL);
   const thisYear = new Date().getFullYear();
 
@@ -82,6 +91,18 @@ export default async function Home() {
                 </span>
               </div>
             </div>
+
+            <Link
+              href="/matches"
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-black/[.08] bg-white/60 px-4 py-3.5 text-sm font-semibold text-zinc-700 transition-colors hover:border-rose-300 dark:border-white/[.12] dark:bg-white/[.03] dark:text-zinc-200 dark:hover:border-rose-700"
+            >
+              💬 내 매칭
+              {matchCount > 0 && (
+                <span className="rounded-full bg-rose-500 px-2 py-0.5 text-xs font-bold text-white">
+                  {matchCount}
+                </span>
+              )}
+            </Link>
 
             <div className="w-full rounded-2xl border border-black/[.08] bg-white/60 p-5 text-left dark:border-white/[.12] dark:bg-white/[.03]">
               <div className="flex items-center gap-3">

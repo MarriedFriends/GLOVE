@@ -11,12 +11,49 @@ import type { Database } from "@/lib/supabase/database.types";
 import { sendLike } from "./actions";
 
 type Candidate =
-  Database["public"]["Functions"]["find_candidates"]["Returns"][number];
+  Database["public"]["Functions"]["get_daily_candidates"]["Returns"][number];
 type Prefs = Database["public"]["Tables"]["match_preferences"]["Row"];
 
 /** Small glowing chip for a condition the candidate satisfies. */
 const glowChip =
   "inline-flex items-center gap-1 rounded-full border border-green-400 bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-700 shadow-[0_0_10px_rgba(74,222,128,0.45)] dark:border-green-600 dark:bg-green-950/40 dark:text-green-300";
+
+/** Compatibility tier — shown instead of the raw score. */
+function scoreTier(score: number): { label: string; classes: string } {
+  if (score >= 80) {
+    return {
+      label: "최상",
+      classes:
+        "bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300",
+    };
+  }
+  if (score >= 60) {
+    return {
+      label: "매우 좋음",
+      classes:
+        "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
+    };
+  }
+  if (score >= 40) {
+    return {
+      label: "좋음",
+      classes:
+        "bg-green-50 text-green-600 dark:bg-green-950/40 dark:text-green-400",
+    };
+  }
+  if (score >= 20) {
+    return {
+      label: "무난함",
+      classes:
+        "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300",
+    };
+  }
+  return {
+    label: "보통",
+    classes:
+      "bg-zinc-100 text-zinc-500 dark:bg-white/[.08] dark:text-zinc-400",
+  };
+}
 
 export function DiscoverList({
   candidates,
@@ -82,8 +119,10 @@ export function DiscoverList({
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-bold text-rose-500 dark:bg-rose-950/40 dark:text-rose-300">
-                  궁합 {c.score}점
+                <span
+                  className={`rounded-full px-3 py-1.5 text-sm font-bold ${scoreTier(c.score).classes}`}
+                >
+                  궁합 {scoreTier(c.score).label}
                 </span>
                 <span
                   className={`text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}
@@ -137,23 +176,22 @@ export function DiscoverList({
                   </p>
                 )}
 
-                <form action={sendLike} className="mt-5 grid grid-cols-2 gap-3">
-                  <input type="hidden" name="likee_id" value={c.candidate_id} />
-                  <button
-                    name="is_like"
-                    value="false"
-                    className="rounded-full border-2 border-black/[.08] py-3 text-sm font-semibold text-zinc-500 transition-colors hover:bg-black/[.04] dark:border-white/[.12] dark:text-zinc-400 dark:hover:bg-white/[.06]"
-                  >
-                    ✕ 패스
-                  </button>
-                  <button
-                    name="is_like"
-                    value="true"
-                    className="rounded-full bg-gradient-to-r from-rose-500 to-pink-500 py-3 text-sm font-semibold text-white shadow-lg shadow-rose-500/30 transition-transform hover:scale-[1.02]"
-                  >
-                    💗 좋아요
-                  </button>
-                </form>
+                {c.liked ? (
+                  <div className="mt-5 rounded-full border-2 border-rose-200 py-3 text-center text-sm font-semibold text-rose-400 dark:border-rose-900 dark:text-rose-500">
+                    💗 좋아요 보냄 — 상대의 응답을 기다려요
+                  </div>
+                ) : (
+                  <form action={sendLike} className="mt-5">
+                    <input
+                      type="hidden"
+                      name="likee_id"
+                      value={c.candidate_id}
+                    />
+                    <button className="w-full rounded-full bg-gradient-to-r from-rose-500 to-pink-500 py-3 text-sm font-semibold text-white shadow-lg shadow-rose-500/30 transition-transform hover:scale-[1.02]">
+                      💗 좋아요
+                    </button>
+                  </form>
+                )}
               </div>
             )}
           </div>
