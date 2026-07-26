@@ -146,7 +146,6 @@ export function DiscoverList({
                   </p>
                   <p className="text-sm text-zinc-500 dark:text-zinc-400">
                     {c.mbti}
-                    {c.university ? ` · ${c.university}` : ""}
                   </p>
                 </div>
               </div>
