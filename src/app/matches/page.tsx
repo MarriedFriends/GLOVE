@@ -105,7 +105,9 @@ export default async function MatchesPage() {
                     )}
                   </p>
                   <p className="truncate text-sm text-zinc-500 dark:text-zinc-400">
-                    {last?.content ?? "첫 메시지를 보내보세요 👋"}
+                    {last
+                      ? (last.content ?? "🎙️ 음성 메시지")
+                      : "첫 메시지를 보내보세요 👋"}
                   </p>
                 </div>
                 <span className="text-zinc-300 dark:text-zinc-600">›</span>

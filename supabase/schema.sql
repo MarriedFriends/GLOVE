@@ -123,8 +123,24 @@ create table if not exists public.messages (
   id         uuid primary key default gen_random_uuid(),
   match_id   uuid not null references public.matches (id) on delete cascade,
   sender_id  uuid not null references public.profiles (id) on delete cascade,
-  content    text not null check (char_length(content) between 1 and 2000),
-  created_at timestamptz not null default now()
+  content    text,                       -- null for voice messages
+  audio_path text,                       -- storage path of a modulated voice note
+  created_at timestamptz not null default now(),
+  constraint messages_content_or_audio check (
+    (content is not null and char_length(content) between 1 and 2000)
+    or audio_path is not null
+  )
+);
+
+-- Voice-message columns added after the first release — bring existing
+-- databases up to date.
+alter table public.messages add column if not exists audio_path text;
+alter table public.messages alter column content drop not null;
+alter table public.messages drop constraint if exists messages_content_check;
+alter table public.messages drop constraint if exists messages_content_or_audio;
+alter table public.messages add constraint messages_content_or_audio check (
+  (content is not null and char_length(content) between 1 and 2000)
+  or audio_path is not null
 );
 create index if not exists messages_match_created_idx
   on public.messages (match_id, created_at desc);
@@ -572,6 +588,43 @@ $$;
 
 revoke execute on function public.get_daily_candidates() from public, anon;
 grant execute on function public.get_daily_candidates() to authenticated;
+
+-- ===========================================================================
+-- Storage: private bucket for (already-modulated) voice messages.
+-- Files live at <match_id>/<uuid>.wav; only the two participants of that
+-- match may upload or read them. Voices are pitch-shifted ON THE CLIENT
+-- before upload, so the original voice never reaches the server.
+-- ===========================================================================
+insert into storage.buckets (id, name, public)
+values ('voice-messages', 'voice-messages', false)
+on conflict (id) do nothing;
+
+drop policy if exists "Voice upload by participants" on storage.objects;
+create policy "Voice upload by participants"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'voice-messages'
+    and exists (
+      select 1 from public.matches m
+      where m.id::text = (storage.foldername(name))[1]
+        and m.status = 'active'
+        and (select auth.uid()) in (m.user_low, m.user_high)
+    )
+  );
+
+drop policy if exists "Voice read by participants" on storage.objects;
+create policy "Voice read by participants"
+  on storage.objects for select
+  to authenticated
+  using (
+    bucket_id = 'voice-messages'
+    and exists (
+      select 1 from public.matches m
+      where m.id::text = (storage.foldername(name))[1]
+        and (select auth.uid()) in (m.user_low, m.user_high)
+    )
+  );
 
 -- ===========================================================================
 -- Realtime: stream new chat messages to connected clients.

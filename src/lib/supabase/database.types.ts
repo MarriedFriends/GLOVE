@@ -263,21 +263,24 @@ export interface Database {
           id: string;
           match_id: string;
           sender_id: string;
-          content: string;
+          content: string | null;
+          audio_path: string | null;
           created_at: string;
         };
         Insert: {
           id?: string;
           match_id: string;
           sender_id: string;
-          content: string;
+          content?: string | null;
+          audio_path?: string | null;
           created_at?: string;
         };
         Update: {
           id?: string;
           match_id?: string;
           sender_id?: string;
-          content?: string;
+          content?: string | null;
+          audio_path?: string | null;
           created_at?: string;
         };
         Relationships: [
