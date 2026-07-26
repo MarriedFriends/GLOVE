@@ -9,8 +9,8 @@
 
 export const MAX_RECORD_SECONDS = 30;
 
-/** <1 lowers pitch (TV-interview style disguise); >1 raises it. */
-const MODULATION_RATE = 0.82;
+/** >1 raises pitch (helium-style disguise); <1 would lower it. */
+const MODULATION_RATE = 1.35;
 /** Mono 22.05kHz keeps a 30s clip around ~1.3MB as WAV. */
 const OUTPUT_SAMPLE_RATE = 22050;
 
