@@ -68,7 +68,8 @@ export function MessageNotifier({
           const onChatPage = pathname === `/chat/${matchId}`;
           if (onChatPage && visible) return; // already reading it
 
-          const body = m.content ?? "🎙️ 음성 메시지";
+          const body =
+            m.content ?? (m.image_path ? "🎨 그림 메시지" : "🎙️ 음성 메시지");
 
           if (
             !visible &&

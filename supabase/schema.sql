@@ -154,24 +154,29 @@ create table if not exists public.messages (
   sender_id  uuid not null references public.profiles (id) on delete cascade,
   content    text,                       -- null for voice messages
   audio_path text,                       -- storage path of a modulated voice note
+  image_path text,                       -- storage path of a drawing message
   answer_round_id uuid,                  -- set when this message answers a question
   created_at timestamptz not null default now(),
-  constraint messages_content_or_audio check (
+  constraint messages_content_or_media check (
     (content is not null and char_length(content) between 1 and 2000)
     or audio_path is not null
+    or image_path is not null
   )
 );
 
 -- Voice-message columns added after the first release — bring existing
 -- databases up to date.
 alter table public.messages add column if not exists audio_path text;
+alter table public.messages add column if not exists image_path text;
 alter table public.messages add column if not exists answer_round_id uuid;
 alter table public.messages alter column content drop not null;
 alter table public.messages drop constraint if exists messages_content_check;
 alter table public.messages drop constraint if exists messages_content_or_audio;
-alter table public.messages add constraint messages_content_or_audio check (
+alter table public.messages drop constraint if exists messages_content_or_media;
+alter table public.messages add constraint messages_content_or_media check (
   (content is not null and char_length(content) between 1 and 2000)
   or audio_path is not null
+  or image_path is not null
 );
 create index if not exists messages_match_created_idx
   on public.messages (match_id, created_at desc);
@@ -749,13 +754,23 @@ create policy "Questions readable"
   to authenticated
   using (true);
 
+-- Make room so the self-portrait question sits second (descending order
+-- avoids unique(stage, ord) collisions on existing databases; no-ops on
+-- fresh installs).
+update public.questions set ord = 6 where id = 5 and stage = 1 and ord <> 6;
+update public.questions set ord = 5 where id = 4 and stage = 1 and ord <> 5;
+update public.questions set ord = 4 where id = 3 and stage = 1 and ord <> 4;
+update public.questions set ord = 3 where id = 2 and stage = 1 and ord <> 3;
+update public.questions set ord = 2 where id = 1 and stage = 1 and ord <> 2;
+
 insert into public.questions (id, stage, ord, prompt) values
   (16, 1, 0, '만나서 반가워요! 먼저 간단한 자기소개 부탁해요 🙌 (분위기, 하는 일, 요즘 근황 등)'),
-  (1, 1, 1, '요즘 가장 빠져있는 것은 무엇인가요?'),
-  (2, 1, 2, '스트레스 받으면 어떻게 푸는 편이에요?'),
-  (3, 1, 3, '최근에 가장 크게 웃었던 순간은 언제였어요?'),
-  (4, 1, 4, '인생 최고의 맛집 하나만 소개한다면?'),
-  (5, 1, 5, '주말을 완벽하게 보내는 나만의 방법은?'),
+  (17, 1, 1, '나의 자화상을 그려서 보내주세요! 🎨 (입력창 옆 그리기 버튼으로 그릴 수 있어요)'),
+  (1, 1, 2, '요즘 가장 빠져있는 것은 무엇인가요?'),
+  (2, 1, 3, '스트레스 받으면 어떻게 푸는 편이에요?'),
+  (3, 1, 4, '최근에 가장 크게 웃었던 순간은 언제였어요?'),
+  (4, 1, 5, '인생 최고의 맛집 하나만 소개한다면?'),
+  (5, 1, 6, '주말을 완벽하게 보내는 나만의 방법은?'),
   (6, 2, 1, '연애에서 가장 중요하다고 생각하는 한 가지는?'),
   (7, 2, 2, '데이트로 영화관 vs 한강 산책, 어느 쪽? 이유는?'),
   (8, 2, 3, '상대방의 어떤 모습에 설레는 편인가요?'),
@@ -1174,6 +1189,39 @@ create policy "Voice read by participants"
   to authenticated
   using (
     bucket_id = 'voice-messages'
+    and exists (
+      select 1 from public.matches m
+      where m.id::text = (storage.foldername(name))[1]
+        and (select auth.uid()) in (m.user_low, m.user_high)
+    )
+  );
+
+-- Drawing messages live in their own private bucket with the same
+-- participants-only access as voice notes.
+insert into storage.buckets (id, name, public)
+values ('chat-images', 'chat-images', false)
+on conflict (id) do nothing;
+
+drop policy if exists "Image upload by participants" on storage.objects;
+create policy "Image upload by participants"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'chat-images'
+    and exists (
+      select 1 from public.matches m
+      where m.id::text = (storage.foldername(name))[1]
+        and m.status = 'active'
+        and (select auth.uid()) in (m.user_low, m.user_high)
+    )
+  );
+
+drop policy if exists "Image read by participants" on storage.objects;
+create policy "Image read by participants"
+  on storage.objects for select
+  to authenticated
+  using (
+    bucket_id = 'chat-images'
     and exists (
       select 1 from public.matches m
       where m.id::text = (storage.foldername(name))[1]

@@ -36,7 +36,7 @@ export default async function MatchesPage() {
     matchIds.length
       ? supabase
           .from("messages")
-          .select("match_id, content, created_at")
+          .select("match_id, content, audio_path, image_path, created_at")
           .in("match_id", matchIds)
           .order("created_at", { ascending: false })
           .limit(100)
@@ -112,7 +112,8 @@ export default async function MatchesPage() {
                     {expired
                       ? "⏰ 종료된 채팅 — 연락처 교환 가능"
                       : last
-                        ? (last.content ?? "🎙️ 음성 메시지")
+                        ? (last.content ??
+                          (last.image_path ? "🎨 그림 메시지" : "🎙️ 음성 메시지"))
                         : "첫 메시지를 보내보세요 👋"}
                   </p>
                 </div>

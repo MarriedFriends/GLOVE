@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 import { MAX_RECORD_SECONDS, modulateVoice } from "@/lib/voice";
+import { DrawingModal } from "./DrawingModal";
 import type { Database } from "@/lib/supabase/database.types";
 
 type Message = Database["public"]["Tables"]["messages"]["Row"];
@@ -59,6 +60,8 @@ export function ChatRoom({
   const [contactDraft, setContactDraft] = useState("");
   const [contactSending, setContactSending] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [drawOpen, setDrawOpen] = useState(false);
+  const [drawSending, setDrawSending] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -258,12 +261,41 @@ export function ChatRoom({
     appendMessage(data);
     // The trigger may have tagged this message as an answer / completed the
     // round — refresh the round list so the banner reflects it immediately.
+    refreshRounds();
+  }
+
+  async function refreshRounds() {
     const { data: freshRounds } = await supabase
       .from("question_rounds")
       .select("*")
       .eq("match_id", matchId)
       .order("round_no");
     if (freshRounds) setRounds(freshRounds);
+  }
+
+  async function sendDrawing(blob: Blob) {
+    if (drawSending) return;
+    setDrawSending(true);
+    setError(null);
+    try {
+      const path = `${matchId}/${crypto.randomUUID()}.png`;
+      const { error: uploadError } = await supabase.storage
+        .from("chat-images")
+        .upload(path, blob, { contentType: "image/png" });
+      if (uploadError) throw uploadError;
+      const { data, error: insertError } = await supabase
+        .from("messages")
+        .insert({ match_id: matchId, sender_id: myId, image_path: path })
+        .select()
+        .single();
+      if (insertError) throw insertError;
+      appendMessage(data);
+      setDrawOpen(false);
+      refreshRounds();
+    } catch {
+      setError("그림을 보내지 못했어요. 다시 시도해주세요.");
+    }
+    setDrawSending(false);
   }
 
   async function readyForNext() {
@@ -308,12 +340,7 @@ export function ChatRoom({
           .single();
         if (insertError) throw insertError;
         appendMessage(data);
-        const { data: freshRounds } = await supabase
-          .from("question_rounds")
-          .select("*")
-          .eq("match_id", matchId)
-          .order("round_no");
-        if (freshRounds) setRounds(freshRounds);
+        refreshRounds();
       } catch {
         setError("음성 메시지를 보내지 못했어요. 다시 시도해주세요.");
       }
@@ -458,7 +485,13 @@ export function ChatRoom({
           </p>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
             {!myAnswered && !otherAnswered && (
-              <>✍️ 지금 보내는 첫 메시지가 이 질문의 답이 돼요</>
+              <>
+                {questionById
+                  .get(activeRound.question_id)
+                  ?.prompt.includes("자화상")
+                  ? "🎨 입력창 옆 그리기 버튼으로 그려서 보내면 답이 돼요"
+                  : "✍️ 지금 보내는 첫 메시지가 이 질문의 답이 돼요"}
+              </>
             )}
             {!myAnswered && otherAnswered && (
               <>👀 상대는 답했어요 — 내 첫 메시지가 답이 돼요</>
@@ -531,6 +564,8 @@ export function ChatRoom({
                   >
                     {m.audio_path ? (
                       <VoiceBubble supabase={supabase} path={m.audio_path} />
+                    ) : m.image_path ? (
+                      <ImageBubble supabase={supabase} path={m.image_path} />
                     ) : (
                       m.content
                     )}
@@ -651,6 +686,14 @@ export function ChatRoom({
             >
               🎤
             </button>
+            <button
+              type="button"
+              onClick={() => setDrawOpen(true)}
+              aria-label="그림 그리기"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-black/[.1] text-lg transition-colors hover:border-rose-300 dark:border-white/[.15] dark:hover:border-rose-700"
+            >
+              🎨
+            </button>
             <input
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -725,9 +768,13 @@ export function ChatRoom({
                       Q. {question?.prompt}
                     </p>
                     <p className="mt-1.5 text-sm leading-6 text-zinc-800 dark:text-zinc-200">
-                      {message.audio_path
-                        ? "🎙️ 음성으로 답했어요"
-                        : message.content}
+                      {message.audio_path ? (
+                        "🎙️ 음성으로 답했어요"
+                      ) : message.image_path ? (
+                        <ImageBubble supabase={supabase} path={message.image_path} />
+                      ) : (
+                        message.content
+                      )}
                     </p>
                   </div>
                 ))}
@@ -736,6 +783,14 @@ export function ChatRoom({
           </div>
         </div>
       </div>
+
+      {drawOpen && !expired && (
+        <DrawingModal
+          sending={drawSending}
+          onClose={() => setDrawOpen(false)}
+          onSend={sendDrawing}
+        />
+      )}
     </>
   );
 }
@@ -764,5 +819,38 @@ function VoiceBubble({ supabase, path }: { supabase: Supabase; path: string }) {
   if (!url) return <span>🎙️ 불러오는 중...</span>;
   return (
     <audio controls preload="metadata" src={url} className="h-10 w-52 max-w-full" />
+  );
+}
+
+
+/** Fetches a signed URL for a private drawing and renders it. */
+function ImageBubble({ supabase, path }: { supabase: Supabase; path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    supabase.storage
+      .from("chat-images")
+      .createSignedUrl(path, 3600)
+      .then(({ data, error }) => {
+        if (!alive) return;
+        if (error || !data) setFailed(true);
+        else setUrl(data.signedUrl);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [supabase, path]);
+
+  if (failed) return <span>🎨 그림을 불러오지 못했어요</span>;
+  if (!url) return <span>🎨 불러오는 중...</span>;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt="그림 메시지"
+      className="h-44 w-44 max-w-full rounded-lg bg-white object-contain"
+    />
   );
 }
