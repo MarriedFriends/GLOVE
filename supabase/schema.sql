@@ -590,6 +590,288 @@ revoke execute on function public.get_daily_candidates() from public, anon;
 grant execute on function public.get_daily_candidates() to authenticated;
 
 -- ===========================================================================
+-- Question curriculum: staged icebreaker questions inside each chat.
+--
+-- Flow: a match's first question round is created by trigger. Each side
+-- writes an answer into question_answers (row-per-user, so RLS can hide the
+-- other's answer). When the second answer arrives, a trigger flips the round
+-- to 'revealed' — clients subscribe to question_rounds via Realtime and both
+-- screens reveal simultaneously. Passing is limited to 2 per user per match,
+-- enforced server-side.
+-- ===========================================================================
+create table if not exists public.questions (
+  id     int primary key,
+  stage  int not null check (stage between 1 and 3),
+  ord    int not null,
+  prompt text not null,
+  unique (stage, ord)
+);
+
+alter table public.questions enable row level security;
+
+drop policy if exists "Questions readable" on public.questions;
+create policy "Questions readable"
+  on public.questions for select
+  to authenticated
+  using (true);
+
+insert into public.questions (id, stage, ord, prompt) values
+  (1, 1, 1, '요즘 가장 빠져있는 것은 무엇인가요?'),
+  (2, 1, 2, '스트레스 받으면 어떻게 푸는 편이에요?'),
+  (3, 1, 3, '최근에 가장 크게 웃었던 순간은 언제였어요?'),
+  (4, 1, 4, '인생 최고의 맛집 하나만 소개한다면?'),
+  (5, 1, 5, '주말을 완벽하게 보내는 나만의 방법은?'),
+  (6, 2, 1, '연애에서 가장 중요하다고 생각하는 한 가지는?'),
+  (7, 2, 2, '데이트로 영화관 vs 한강 산책, 어느 쪽? 이유는?'),
+  (8, 2, 3, '상대방의 어떤 모습에 설레는 편인가요?'),
+  (9, 2, 4, '갈등이 생기면 나는 어떻게 푸는 사람인가요?'),
+  (10, 2, 5, '나를 성격으로 동물에 비유하면? (얼굴상 말고!)'),
+  (11, 3, 1, '요즘 나의 가장 큰 고민은 무엇인가요?'),
+  (12, 3, 2, '10년 뒤 나는 어떤 모습이었으면 좋겠어요?'),
+  (13, 3, 3, '지금까지 받아본 최고의 위로는 무엇이었나요?'),
+  (14, 3, 4, '나의 어떤 점이 연인에게 가장 좋은 선물이 될까요?'),
+  (15, 3, 5, '서로 정체를 공개한다면 제일 먼저 뭘 하고 싶어요?')
+on conflict (id) do nothing;
+
+create table if not exists public.question_rounds (
+  id             uuid primary key default gen_random_uuid(),
+  match_id       uuid not null references public.matches (id) on delete cascade,
+  question_id    int  not null references public.questions (id),
+  round_no       int  not null,
+  status         text not null default 'active'
+                   check (status in ('active', 'revealed', 'passed')),
+  low_submitted  boolean not null default false,   -- user_low answered (no content leaked)
+  high_submitted boolean not null default false,
+  passed_by      uuid references public.profiles (id) on delete set null,
+  created_at     timestamptz not null default now(),
+  revealed_at    timestamptz,
+  unique (match_id, round_no),
+  unique (match_id, question_id)
+);
+
+alter table public.question_rounds enable row level security;
+
+drop policy if exists "Rounds readable by participants" on public.question_rounds;
+create policy "Rounds readable by participants"
+  on public.question_rounds for select
+  to authenticated
+  using (
+    exists (
+      select 1 from public.matches m
+      where m.id = question_rounds.match_id
+        and (select auth.uid()) in (m.user_low, m.user_high)
+    )
+  );
+-- No INSERT/UPDATE policies: rounds change only via triggers and RPCs below.
+
+create table if not exists public.question_answers (
+  round_id     uuid not null references public.question_rounds (id) on delete cascade,
+  user_id      uuid not null references public.profiles (id) on delete cascade,
+  answer       text not null check (char_length(answer) between 1 and 500),
+  submitted_at timestamptz not null default now(),
+  primary key (round_id, user_id)
+);
+
+alter table public.question_answers enable row level security;
+
+drop policy if exists "Submit own answer" on public.question_answers;
+create policy "Submit own answer"
+  on public.question_answers for insert
+  to authenticated
+  with check (
+    user_id = (select auth.uid())
+    and exists (
+      select 1
+      from public.question_rounds qr
+      join public.matches m on m.id = qr.match_id
+      where qr.id = question_answers.round_id
+        and qr.status = 'active'
+        and m.status = 'active'
+        and (select auth.uid()) in (m.user_low, m.user_high)
+    )
+  );
+
+-- Your own answer is always visible; the other side's only after reveal.
+drop policy if exists "Read own or revealed answers" on public.question_answers;
+create policy "Read own or revealed answers"
+  on public.question_answers for select
+  to authenticated
+  using (
+    user_id = (select auth.uid())
+    or exists (
+      select 1
+      from public.question_rounds qr
+      join public.matches m on m.id = qr.match_id
+      where qr.id = question_answers.round_id
+        and qr.status = 'revealed'
+        and (select auth.uid()) in (m.user_low, m.user_high)
+    )
+  );
+
+-- First question appears the moment a match is created.
+create or replace function public.start_first_question()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  insert into public.question_rounds (match_id, question_id, round_no)
+  select new.id, q.id, 1
+  from public.questions q
+  order by q.stage, q.ord
+  limit 1
+  on conflict do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_match_created on public.matches;
+create trigger on_match_created
+  after insert on public.matches
+  for each row execute function public.start_first_question();
+
+-- Mark submission flags; reveal when both sides are in.
+create or replace function public.handle_answer_submitted()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_low uuid;
+  v_high uuid;
+begin
+  select m.user_low, m.user_high into v_low, v_high
+  from public.question_rounds qr
+  join public.matches m on m.id = qr.match_id
+  where qr.id = new.round_id;
+
+  if new.user_id = v_low then
+    update public.question_rounds set low_submitted = true where id = new.round_id;
+  elsif new.user_id = v_high then
+    update public.question_rounds set high_submitted = true where id = new.round_id;
+  end if;
+
+  update public.question_rounds
+  set status = 'revealed', revealed_at = now()
+  where id = new.round_id
+    and status = 'active'
+    and low_submitted
+    and high_submitted;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_answer_submitted on public.question_answers;
+create trigger on_answer_submitted
+  after insert on public.question_answers
+  for each row execute function public.handle_answer_submitted();
+
+-- Pull the next unused question (used by the 3-min silence timer and the
+-- "다음 질문 받기" button). Idempotent: does nothing while a round is active.
+create or replace function public.request_next_question(p_match_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+begin
+  if not exists (
+    select 1 from public.matches m
+    where m.id = p_match_id
+      and m.status = 'active'
+      and uid in (m.user_low, m.user_high)
+  ) then
+    raise exception 'not a participant of this match';
+  end if;
+
+  if exists (
+    select 1 from public.question_rounds qr
+    where qr.match_id = p_match_id and qr.status = 'active'
+  ) then
+    return;
+  end if;
+
+  insert into public.question_rounds (match_id, question_id, round_no)
+  select p_match_id, q.id,
+         coalesce((select max(qr2.round_no)
+                   from public.question_rounds qr2
+                   where qr2.match_id = p_match_id), 0) + 1
+  from public.questions q
+  where q.id not in (
+    select qr3.question_id from public.question_rounds qr3
+    where qr3.match_id = p_match_id
+  )
+  order by q.stage, q.ord
+  limit 1
+  on conflict do nothing;
+end;
+$$;
+
+revoke execute on function public.request_next_question(uuid) from public, anon;
+grant execute on function public.request_next_question(uuid) to authenticated;
+
+-- Skip a question. Each user gets 2 passes per match, enforced here.
+create or replace function public.pass_question(p_round_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  v_match uuid;
+  v_status text;
+  v_passes int;
+begin
+  select qr.match_id, qr.status into v_match, v_status
+  from public.question_rounds qr
+  join public.matches m on m.id = qr.match_id
+  where qr.id = p_round_id
+    and uid in (m.user_low, m.user_high);
+
+  if v_match is null then
+    raise exception 'round not found';
+  end if;
+  if v_status <> 'active' then
+    return;
+  end if;
+
+  select count(*) into v_passes
+  from public.question_rounds
+  where match_id = v_match and passed_by = uid;
+
+  if v_passes >= 2 then
+    raise exception 'no_passes_left';
+  end if;
+
+  update public.question_rounds
+  set status = 'passed', passed_by = uid, revealed_at = now()
+  where id = p_round_id and status = 'active';
+end;
+$$;
+
+revoke execute on function public.pass_question(uuid) from public, anon;
+grant execute on function public.pass_question(uuid) to authenticated;
+
+-- Stream round changes (new question, both-submitted reveal, pass) live.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'question_rounds'
+  ) then
+    alter publication supabase_realtime add table public.question_rounds;
+  end if;
+end $$;
+
+-- ===========================================================================
 -- Storage: private bucket for (already-modulated) voice messages.
 -- Files live at <match_id>/<uuid>.wav; only the two participants of that
 -- match may upload or read them. Voices are pitch-shifted ON THE CLIENT

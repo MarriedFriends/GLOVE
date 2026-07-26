@@ -27,7 +27,7 @@ export default async function ChatPage({
   if (!match || match.status !== "active") redirect("/matches");
 
   const otherId = match.user_low === user.id ? match.user_high : match.user_low;
-  const [otherRes, messagesRes] = await Promise.all([
+  const [otherRes, messagesRes, questionsRes, roundsRes] = await Promise.all([
     supabase
       .from("profiles")
       .select("handle, face_type")
@@ -39,9 +39,28 @@ export default async function ChatPage({
       .eq("match_id", match.id)
       .order("created_at", { ascending: true })
       .limit(200),
+    supabase.from("questions").select("*").order("stage").order("ord"),
+    supabase
+      .from("question_rounds")
+      .select("*")
+      .eq("match_id", match.id)
+      .order("round_no", { ascending: true }),
   ]);
   const other = otherRes.data;
   const messages = messagesRes.data;
+  const questions = questionsRes.data ?? [];
+  const rounds = roundsRes.data ?? [];
+
+  // Answers visible to me right now (mine + those in revealed rounds).
+  const { data: answers } = rounds.length
+    ? await supabase
+        .from("question_answers")
+        .select("*")
+        .in(
+          "round_id",
+          rounds.map((r) => r.id),
+        )
+    : { data: [] };
 
   const emoji =
     FACE_OPTIONS.find((o) => o.value === other?.face_type)?.emoji ?? "🙂";
@@ -70,7 +89,11 @@ export default async function ChatPage({
       <ChatRoom
         matchId={match.id}
         myId={user.id}
+        userLow={match.user_low}
         initialMessages={messages ?? []}
+        questions={questions}
+        initialRounds={rounds}
+        initialAnswers={answers ?? []}
       />
     </div>
   );

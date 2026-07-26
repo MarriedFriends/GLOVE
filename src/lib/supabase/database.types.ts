@@ -298,6 +298,113 @@ export interface Database {
           },
         ];
       };
+      questions: {
+        Row: {
+          id: number;
+          stage: number;
+          ord: number;
+          prompt: string;
+        };
+        Insert: {
+          id: number;
+          stage: number;
+          ord: number;
+          prompt: string;
+        };
+        Update: {
+          id?: number;
+          stage?: number;
+          ord?: number;
+          prompt?: string;
+        };
+        Relationships: [];
+      };
+      question_rounds: {
+        Row: {
+          id: string;
+          match_id: string;
+          question_id: number;
+          round_no: number;
+          status: "active" | "revealed" | "passed";
+          low_submitted: boolean;
+          high_submitted: boolean;
+          passed_by: string | null;
+          created_at: string;
+          revealed_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          match_id: string;
+          question_id: number;
+          round_no: number;
+          status?: "active" | "revealed" | "passed";
+          low_submitted?: boolean;
+          high_submitted?: boolean;
+          passed_by?: string | null;
+          created_at?: string;
+          revealed_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          match_id?: string;
+          question_id?: number;
+          round_no?: number;
+          status?: "active" | "revealed" | "passed";
+          low_submitted?: boolean;
+          high_submitted?: boolean;
+          passed_by?: string | null;
+          created_at?: string;
+          revealed_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "question_rounds_match_id_fkey";
+            columns: ["match_id"];
+            referencedRelation: "matches";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "question_rounds_question_id_fkey";
+            columns: ["question_id"];
+            referencedRelation: "questions";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      question_answers: {
+        Row: {
+          round_id: string;
+          user_id: string;
+          answer: string;
+          submitted_at: string;
+        };
+        Insert: {
+          round_id: string;
+          user_id: string;
+          answer: string;
+          submitted_at?: string;
+        };
+        Update: {
+          round_id?: string;
+          user_id?: string;
+          answer?: string;
+          submitted_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "question_answers_round_id_fkey";
+            columns: ["round_id"];
+            referencedRelation: "question_rounds";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "question_answers_user_id_fkey";
+            columns: ["user_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       blocks: {
         Row: {
           blocker_id: string;
@@ -372,6 +479,14 @@ export interface Database {
     };
     Views: Record<never, never>;
     Functions: {
+      request_next_question: {
+        Args: { p_match_id: string };
+        Returns: undefined;
+      };
+      pass_question: {
+        Args: { p_round_id: string };
+        Returns: undefined;
+      };
       get_daily_candidates: {
         Args: Record<string, never>;
         Returns: {
