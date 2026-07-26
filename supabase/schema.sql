@@ -233,11 +233,20 @@ create policy "Update own profile"
 -- You can create your own likes, see the ones you sent, and see the ones you
 -- RECEIVED (so you can accept them — this reveals the liker to the recipient,
 -- a deliberate product decision).
+-- You can't send likes while you're inside a live (48h) chat.
 drop policy if exists "Create own likes" on public.likes;
 create policy "Create own likes"
   on public.likes for insert
   to authenticated
-  with check (liker_id = (select auth.uid()));
+  with check (
+    liker_id = (select auth.uid())
+    and not exists (
+      select 1 from public.matches m
+      where m.status = 'active'
+        and m.created_at > now() - interval '48 hours'
+        and (select auth.uid()) in (m.user_low, m.user_high)
+    )
+  );
 
 drop policy if exists "Read own likes" on public.likes;
 create policy "Read own likes"
@@ -648,7 +657,15 @@ begin
   join public.profiles c on c.id = dp.candidate_id
   left join public.match_preferences cmp
     on cmp.user_id = dp.candidate_id and cmp.mode = 'date'
-  where dp.user_id = uid and dp.pick_date = today
+  where dp.user_id = uid
+    and dp.pick_date = today
+    -- Hide picks who entered a live chat after this morning's selection.
+    and not exists (
+      select 1 from public.matches mb
+      where c.id in (mb.user_low, mb.user_high)
+        and mb.status = 'active'
+        and mb.created_at > now() - interval '48 hours'
+    )
   order by dp.score desc;
 end;
 $$;

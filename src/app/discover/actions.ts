@@ -20,6 +20,22 @@ export async function sendLike(formData: FormData) {
   const likeeId = String(formData.get("likee_id") ?? "");
   if (!likeeId) redirect("/discover");
 
+  // One chat at a time: no sending likes while my 48h chat is running.
+  const { data: myMatches } = await supabase
+    .from("matches")
+    .select("created_at")
+    .eq("status", "active");
+  const busy = (myMatches ?? []).some(
+    (m) => Date.now() - +new Date(m.created_at) < 48 * 3600 * 1000,
+  );
+  if (busy) {
+    redirect(
+      `/discover?error=${encodeURIComponent(
+        "채팅 진행 중에는 좋아요를 보낼 수 없어요. 48시간 채팅이 끝나면 다시 만나요!",
+      )}`,
+    );
+  }
+
   // ignoreDuplicates: pressing the button twice must not error.
   const { error } = await supabase.from("likes").upsert(
     { liker_id: user.id, likee_id: likeeId, is_like: true },

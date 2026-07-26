@@ -19,7 +19,7 @@ export default async function DiscoverPage({
   if (!user) redirect("/login");
 
   // Independent queries — run in parallel to cut page latency.
-  const [profileRes, prefsRes, candidatesRes] = await Promise.all([
+  const [profileRes, prefsRes, candidatesRes, matchesRes] = await Promise.all([
     supabase
       .from("profiles")
       .select(SURVEY_FIELDS)
@@ -32,9 +32,15 @@ export default async function DiscoverPage({
       .eq("mode", "date")
       .maybeSingle(),
     supabase.rpc("get_daily_candidates"),
+    supabase.from("matches").select("id, created_at").eq("status", "active"),
   ]);
 
   if (!isProfileComplete(profileRes.data)) redirect("/onboarding");
+
+  // While a 48h chat is running, discovery is closed for this user.
+  const activeChat = (matchesRes.data ?? []).find(
+    (m) => Date.now() - +new Date(m.created_at) < 48 * 3600 * 1000,
+  );
 
   // No saved preferences yet → set them up first. (Full row: the list view
   // compares each candidate against these conditions to highlight matches.)
@@ -88,7 +94,25 @@ export default async function DiscoverPage({
           </p>
         )}
 
-        {rpcError ? (
+        {activeChat ? (
+          <div className="rounded-2xl border border-black/[.08] bg-white/60 p-8 text-center dark:border-white/[.12] dark:bg-white/[.03]">
+            <p className="text-4xl">💬</p>
+            <p className="mt-3 font-semibold text-zinc-900 dark:text-white">
+              지금은 채팅에 집중할 시간이에요
+            </p>
+            <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+              채팅이 진행되는 동안에는 새로운 추천과 좋아요가 잠시 멈춰요.
+              <br />
+              48시간 채팅이 끝나면 다시 새로운 인연을 찾아드릴게요!
+            </p>
+            <Link
+              href={`/chat/${activeChat.id}`}
+              className="mt-5 inline-block rounded-full bg-gradient-to-r from-rose-500 to-pink-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-rose-500/30"
+            >
+              💬 채팅방으로 가기
+            </Link>
+          </div>
+        ) : rpcError ? (
           <div className="rounded-2xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
             <p className="font-semibold">매칭 엔진이 아직 준비되지 않았어요</p>
             <p className="mt-1">
