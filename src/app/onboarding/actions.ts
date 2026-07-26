@@ -16,7 +16,7 @@ import {
   MAX_HOBBIES,
 } from "@/lib/onboarding-options";
 import type { FaceType, Gender } from "@/lib/supabase/database.types";
-import { generateNickname } from "@/lib/nickname";
+import { isValidNickname } from "@/lib/nickname";
 
 function fail(message: string): never {
   redirect(`/onboarding?error=${encodeURIComponent(message)}`);
@@ -70,16 +70,22 @@ export async function saveOnboarding(formData: FormData) {
     fail(`취미를 1~${MAX_HOBBIES}개 골라주세요.`);
   }
 
-  // Give the user an anonymous nickname built from their answers
-  // (e.g. "흥이 많은 고양이"). Handles are unique, so on a collision we
-  // retry with a new random combination, then with a numeric suffix.
+  // The user picked their nickname by re-rolling in the wizard. Verify it's
+  // genuinely one of the combinations their answers can produce (the hidden
+  // field could be tampered with).
+  const chosenNickname = String(formData.get("handle") ?? "");
+  if (!isValidNickname(chosenNickname, faceType, hobbies, mbti)) {
+    fail("닉네임이 올바르지 않아요. 다시 뽑아주세요.");
+  }
+
+  // Handles are unique — if someone else already took this name, keep the
+  // user's choice and append a random number.
   let saved = false;
   for (let attempt = 0; attempt < 5 && !saved; attempt++) {
-    const nickname = generateNickname(faceType, hobbies, mbti);
     const handle =
-      attempt < 3
-        ? nickname
-        : `${nickname} ${Math.floor(10 + Math.random() * 90)}`;
+      attempt === 0
+        ? chosenNickname
+        : `${chosenNickname} ${Math.floor(10 + Math.random() * 90)}`;
 
     const { error } = await supabase
       .from("profiles")
@@ -98,11 +104,11 @@ export async function saveOnboarding(formData: FormData) {
     if (!error) {
       saved = true;
     } else if (error.code !== "23505") {
-      // 23505 = duplicate handle → retry; anything else is a real failure.
+      // 23505 = duplicate handle → retry with a suffix; else a real failure.
       fail(error.message);
     }
   }
-  if (!saved) fail("닉네임을 만들지 못했어요. 다시 시도해주세요.");
+  if (!saved) fail("닉네임 저장에 실패했어요. 다시 시도해주세요.");
 
   revalidatePath("/", "layout");
   redirect("/");

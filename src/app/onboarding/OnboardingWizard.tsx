@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+import { generateNickname } from "@/lib/nickname";
 
 import {
   GENDER_OPTIONS,
@@ -17,7 +19,7 @@ import {
 } from "@/lib/onboarding-options";
 import { saveOnboarding } from "./actions";
 
-const TOTAL_STEPS = 6;
+const TOTAL_STEPS = 7;
 
 const bigButton =
   "flex flex-col items-center justify-center gap-2 rounded-2xl border-2 p-6 text-lg font-semibold transition-all";
@@ -36,8 +38,18 @@ export function OnboardingWizard({ error }: { error?: string }) {
   const [face, setFace] = useState<string | null>(null);
   const [mbti, setMbti] = useState<Record<number, string>>({});
   const [hobbies, setHobbies] = useState<string[]>([]);
+  const [nickname, setNickname] = useState<string | null>(null);
 
   const mbtiString = MBTI_PAIRS.map((_, i) => mbti[i] ?? "").join("");
+
+  // Roll a fresh nickname every time the user arrives at the naming step
+  // (answers may have changed if they went back and edited).
+  useEffect(() => {
+    if (step === 6 && face) {
+      setNickname(generateNickname(face, hobbies, mbtiString));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   const canNext = [
     gender !== null,
@@ -46,6 +58,7 @@ export function OnboardingWizard({ error }: { error?: string }) {
     face !== null,
     mbtiString.length === 4,
     hobbies.length >= 1,
+    nickname !== null,
   ][step];
 
   const next = () => setStep((s) => Math.min(s + 1, TOTAL_STEPS - 1));
@@ -290,6 +303,37 @@ export function OnboardingWizard({ error }: { error?: string }) {
         </section>
       )}
 
+      {/* Step 7 — pick your anonymous nickname */}
+      {step === 6 && (
+        <section className="text-center">
+          <h2 className="mb-2 text-2xl font-bold text-zinc-900 dark:text-white">
+            당신의 익명 이름이에요
+          </h2>
+          <p className="mb-8 text-sm text-zinc-500 dark:text-zinc-400">
+            설문 답변으로 만들어졌어요. 마음에 들 때까지 굴려보세요!
+          </p>
+
+          <div className="rounded-3xl border-2 border-rose-200 bg-white/80 px-6 py-10 dark:border-rose-900 dark:bg-white/[.04]">
+            <p className="text-6xl">
+              {FACE_OPTIONS.find((o) => o.value === face)?.emoji ?? "🙂"}
+            </p>
+            <p className="mt-4 text-2xl font-bold text-zinc-900 dark:text-white">
+              {nickname ?? "..."}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              face && setNickname(generateNickname(face, hobbies, mbtiString))
+            }
+            className="mt-4 rounded-full border-2 border-black/[.08] px-6 py-2.5 text-sm font-semibold text-zinc-700 transition-colors hover:border-rose-300 dark:border-white/[.12] dark:text-zinc-200 dark:hover:border-rose-700"
+          >
+            🎲 다른 이름 뽑기
+          </button>
+        </section>
+      )}
+
       {/* Footer: next / submit */}
       <div className="mt-10">
         {step < TOTAL_STEPS - 1 ? (
@@ -303,6 +347,7 @@ export function OnboardingWizard({ error }: { error?: string }) {
           </button>
         ) : (
           <form action={saveOnboarding}>
+            <input type="hidden" name="handle" value={nickname ?? ""} />
             <input type="hidden" name="gender" value={gender ?? ""} />
             <input type="hidden" name="admission_year" value={admissionYear} />
             <input type="hidden" name="age" value={age} />
@@ -320,7 +365,7 @@ export function OnboardingWizard({ error }: { error?: string }) {
               disabled={!canNext}
               className="w-full rounded-full bg-gradient-to-r from-rose-500 to-pink-500 px-6 py-3.5 text-base font-semibold text-white shadow-lg shadow-rose-500/30 transition-transform hover:scale-[1.02] disabled:opacity-40 disabled:hover:scale-100"
             >
-              완료하고 시작하기 🎉
+              이 이름으로 시작하기 🎉
             </button>
           </form>
         )}

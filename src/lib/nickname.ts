@@ -53,11 +53,12 @@ function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-export function generateNickname(
+/** The animal for a face type plus every modifier this user's answers allow. */
+export function getNicknameParts(
   faceType: string,
   hobbies: string[],
   mbti: string,
-): string {
+): { animal: string; pool: string[] } {
   const animal = FACE_ANIMALS[faceType] ?? "동물";
 
   const pool = hobbies.flatMap((h) => HOBBY_MODIFIERS[h] ?? []);
@@ -66,5 +67,29 @@ export function generateNickname(
   }
   if (pool.length === 0) pool.push("정체를 숨긴");
 
+  return { animal, pool };
+}
+
+export function generateNickname(
+  faceType: string,
+  hobbies: string[],
+  mbti: string,
+): string {
+  const { animal, pool } = getNicknameParts(faceType, hobbies, mbti);
   return `${pick(pool)} ${animal}`;
+}
+
+/**
+ * Server-side check that a submitted nickname really is one of the
+ * combinations this user's survey answers can produce (the client sends the
+ * chosen name in a hidden field, which could be tampered with).
+ */
+export function isValidNickname(
+  name: string,
+  faceType: string,
+  hobbies: string[],
+  mbti: string,
+): boolean {
+  const { animal, pool } = getNicknameParts(faceType, hobbies, mbti);
+  return pool.some((modifier) => name === `${modifier} ${animal}`);
 }
