@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
@@ -30,6 +31,7 @@ export function ChatRoom({
   matchId,
   myId,
   userLow,
+  other,
   initialMessages,
   questions,
   initialRounds,
@@ -38,6 +40,7 @@ export function ChatRoom({
   matchId: string;
   myId: string;
   userLow: string;
+  other: { handle: string; emoji: string };
   initialMessages: Message[];
   questions: Question[];
   initialRounds: Round[];
@@ -53,6 +56,7 @@ export function ChatRoom({
   });
   const [text, setText] = useState("");
   const [draft, setDraft] = useState("");
+  const [panelOpen, setPanelOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [answerSending, setAnswerSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -232,6 +236,11 @@ export function ChatRoom({
     }));
   }
 
+  async function readyForNext() {
+    setError(null);
+    await supabase.rpc("ready_for_next", { p_match_id: matchId });
+  }
+
   async function startRecording() {
     setError(null);
     let stream: MediaStream;
@@ -329,8 +338,51 @@ export function ChatRoom({
     stageProgress.find((s) => s.done < s.total)?.stage ??
     3;
 
+  // The newest completed round is where the "다음" vote lives.
+  const latestCompleted = rounds
+    .filter((r) => r.status !== "active")
+    .reduce<Round | null>(
+      (best, r) => (!best || r.round_no > best.round_no ? r : best),
+      null,
+    );
+
+  // Revealed answers by the other person, for the profile side panel.
+  const theirRevealedAnswers = rounds
+    .filter((r) => r.status === "revealed")
+    .map((r) => ({
+      round: r,
+      question: questionById.get(r.question_id),
+      answer: (answers[r.id] ?? []).find((a) => a.user_id !== myId),
+    }))
+    .filter((x) => x.answer);
+
   return (
     <>
+      {/* Header — tap the partner's icon/name to open their answers panel */}
+      <div className="flex items-center gap-3 border-b border-black/[.06] bg-white/70 px-5 py-3 backdrop-blur dark:border-white/[.08] dark:bg-black/40">
+        <Link
+          href="/matches"
+          className="text-sm font-medium text-zinc-500 dark:text-zinc-400"
+        >
+          ←
+        </Link>
+        <button
+          type="button"
+          onClick={() => setPanelOpen(true)}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        >
+          <span className="text-2xl">{other.emoji}</span>
+          <span className="min-w-0">
+            <span className="block truncate font-semibold text-zinc-900 dark:text-white">
+              {other.handle}
+            </span>
+            <span className="block text-xs text-zinc-400 dark:text-zinc-500">
+              아이콘을 누르면 상대의 답변 모음을 볼 수 있어요
+            </span>
+          </span>
+        </button>
+      </div>
+
       {/* Curriculum progress gauge */}
       <div className="border-b border-black/[.06] bg-white/50 px-5 py-2.5 dark:border-white/[.08] dark:bg-black/30">
         <div className="mb-1.5 flex items-center justify-between text-xs">
@@ -385,6 +437,12 @@ export function ChatRoom({
                 setDraft={setDraft}
                 submitting={answerSending}
                 onSubmit={() => submitAnswer(item.r!)}
+                showNextVote={
+                  !activeRound &&
+                  remainingQuestions > 0 &&
+                  item.r.id === latestCompleted?.id
+                }
+                onReadyNext={readyForNext}
               />
             ) : null,
           )}
@@ -392,7 +450,8 @@ export function ChatRoom({
 
         {!activeRound && remainingQuestions > 0 && timeline.length > 0 && (
           <p className="mt-4 text-center text-[10px] text-zinc-400 dark:text-zinc-600">
-            대화가 잠시 조용해지면 다음 질문이 자동으로 도착해요 💌
+            둘 다 &lsquo;다음 질문&rsquo;을 누르거나 잠시 조용해지면 다음 질문이
+            도착해요 💌
           </p>
         )}
         <div ref={bottomRef} />
@@ -457,6 +516,69 @@ export function ChatRoom({
           </form>
         )}
       </div>
+
+      {/* Partner answers side panel (slides in from the right) */}
+      <div
+        className={`fixed inset-0 z-50 transition-opacity duration-200 ${
+          panelOpen ? "" : "pointer-events-none opacity-0"
+        }`}
+      >
+        <div
+          className="absolute inset-0 bg-black/30"
+          onClick={() => setPanelOpen(false)}
+        />
+        <div
+          className={`absolute right-0 top-0 flex h-full w-80 max-w-[85%] transform flex-col bg-white shadow-2xl transition-transform duration-200 dark:bg-zinc-950 ${
+            panelOpen ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <div className="border-b border-black/[.06] p-5 text-center dark:border-white/[.08]">
+            <button
+              type="button"
+              onClick={() => setPanelOpen(false)}
+              aria-label="닫기"
+              className="absolute right-4 top-4 text-zinc-400"
+            >
+              ✕
+            </button>
+            <p className="text-4xl">{other.emoji}</p>
+            <p className="mt-2 font-bold text-zinc-900 dark:text-white">
+              {other.handle}
+            </p>
+            <p className="mt-0.5 text-xs text-zinc-400 dark:text-zinc-500">
+              질문에 답한 내용들이에요
+            </p>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            {theirRevealedAnswers.length === 0 ? (
+              <p className="mt-8 text-center text-sm text-zinc-400 dark:text-zinc-500">
+                아직 공개된 답변이 없어요.
+                <br />
+                질문에 서로 답하면 여기에 쌓여요!
+              </p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {theirRevealedAnswers.map(({ round, question, answer }) => (
+                  <div
+                    key={round.id}
+                    className="rounded-2xl border border-black/[.06] bg-rose-50/50 p-3.5 dark:border-white/[.08] dark:bg-rose-950/20"
+                  >
+                    <p className="text-[10px] font-semibold text-rose-400">
+                      {question?.stage ?? 1}단계 · 질문 {round.round_no}
+                    </p>
+                    <p className="mt-0.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                      Q. {question?.prompt}
+                    </p>
+                    <p className="mt-1.5 text-sm leading-6 text-zinc-800 dark:text-zinc-200">
+                      {answer?.answer}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </>
   );
 }
@@ -509,6 +631,8 @@ function QuestionCard({
   setDraft,
   submitting,
   onSubmit,
+  showNextVote,
+  onReadyNext,
 }: {
   round: Round;
   question: Question | undefined;
@@ -519,12 +643,41 @@ function QuestionCard({
   setDraft: (v: string) => void;
   submitting: boolean;
   onSubmit: () => void;
+  showNextVote: boolean;
+  onReadyNext: () => void;
 }) {
   const myAnswer = answers.find((a) => a.user_id === myId);
   const theirAnswer = answers.find((a) => a.user_id !== myId);
   const iAmLow = myId === userLow;
   const otherSubmitted = iAmLow ? round.high_submitted : round.low_submitted;
+  const myNextPressed = iAmLow ? round.low_next : round.high_next;
+  const otherNextPressed = iAmLow ? round.high_next : round.low_next;
   const stage = question?.stage ?? 1;
+
+  const nextVote = showNextVote && (
+    <div className="mt-3">
+      {myNextPressed ? (
+        <p className="text-center text-xs text-zinc-500 dark:text-zinc-400">
+          ⏳ 상대도 &lsquo;다음&rsquo;을 누르면 새 질문이 도착해요 (1/2)
+        </p>
+      ) : (
+        <>
+          {otherNextPressed && (
+            <p className="mb-1.5 text-center text-xs font-medium text-rose-500">
+              👀 상대가 다음 질문을 기다리고 있어요!
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={onReadyNext}
+            className="w-full rounded-full border border-rose-200 bg-white py-2 text-xs font-semibold text-rose-500 transition-colors hover:bg-rose-50 dark:border-rose-900 dark:bg-zinc-900 dark:hover:bg-rose-950/40"
+          >
+            다음 질문 →
+          </button>
+        </>
+      )}
+    </div>
+  );
 
   return (
     <div className="mx-auto w-full max-w-sm rounded-2xl border-2 border-rose-200 bg-rose-50/80 p-4 dark:border-rose-900 dark:bg-rose-950/30">
@@ -536,11 +689,14 @@ function QuestionCard({
       </p>
 
       {round.status === "passed" ? (
-        <p className="mt-3 rounded-xl bg-black/[.04] px-3 py-2 text-xs text-zinc-500 dark:bg-white/[.06] dark:text-zinc-400">
-          {round.passed_by
-            ? `🙅 ${round.passed_by === myId ? "내가" : "상대가"} 이 질문을 패스했어요`
-            : "⏰ 답변 없이 지나간 질문이에요"}
-        </p>
+        <>
+          <p className="mt-3 rounded-xl bg-black/[.04] px-3 py-2 text-xs text-zinc-500 dark:bg-white/[.06] dark:text-zinc-400">
+            {round.passed_by
+              ? `🙅 ${round.passed_by === myId ? "내가" : "상대가"} 이 질문을 패스했어요`
+              : "⏰ 답변 없이 지나간 질문이에요"}
+          </p>
+          {nextVote}
+        </>
       ) : round.status === "revealed" ? (
         <div className="mt-3 flex flex-col gap-2">
           <p className="text-center text-[11px] font-semibold text-rose-500">
@@ -558,6 +714,7 @@ function QuestionCard({
             </p>
             {myAnswer?.answer ?? "..."}
           </div>
+          {nextVote}
         </div>
       ) : myAnswer ? (
         <div className="mt-3">

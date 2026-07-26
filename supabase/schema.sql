@@ -616,6 +616,7 @@ create policy "Questions readable"
   using (true);
 
 insert into public.questions (id, stage, ord, prompt) values
+  (16, 1, 0, '만나서 반가워요! 먼저 간단한 자기소개 부탁해요 🙌 (분위기, 하는 일, 요즘 근황 등)'),
   (1, 1, 1, '요즘 가장 빠져있는 것은 무엇인가요?'),
   (2, 1, 2, '스트레스 받으면 어떻게 푸는 편이에요?'),
   (3, 1, 3, '최근에 가장 크게 웃었던 순간은 언제였어요?'),
@@ -642,12 +643,18 @@ create table if not exists public.question_rounds (
                    check (status in ('active', 'revealed', 'passed')),
   low_submitted  boolean not null default false,   -- user_low answered (no content leaked)
   high_submitted boolean not null default false,
+  low_next       boolean not null default false,   -- user_low pressed "다음"
+  high_next      boolean not null default false,
   passed_by      uuid references public.profiles (id) on delete set null,
   created_at     timestamptz not null default now(),
   revealed_at    timestamptz,
   unique (match_id, round_no),
   unique (match_id, question_id)
 );
+
+alter table public.question_rounds
+  add column if not exists low_next boolean not null default false,
+  add column if not exists high_next boolean not null default false;
 
 alter table public.question_rounds enable row level security;
 
@@ -826,6 +833,67 @@ grant execute on function public.request_next_question(uuid) to authenticated;
 
 -- The user-pass system was removed — the system advances questions itself.
 drop function if exists public.pass_question(uuid);
+
+-- "다음" vote: after a round is revealed, each side can press 다음. When BOTH
+-- have pressed, the next question fires immediately (no need to wait for the
+-- silence timer).
+create or replace function public.ready_for_next(p_match_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  v_low uuid;
+  v_high uuid;
+  v_round_id uuid;
+begin
+  select m.user_low, m.user_high into v_low, v_high
+  from public.matches m
+  where m.id = p_match_id
+    and m.status = 'active'
+    and uid in (m.user_low, m.user_high);
+  if v_low is null then
+    raise exception 'not a participant of this match';
+  end if;
+
+  -- Can't skip ahead while a question is still open.
+  if exists (
+    select 1 from public.question_rounds qr
+    where qr.match_id = p_match_id and qr.status = 'active'
+  ) then
+    return;
+  end if;
+
+  select qr.id into v_round_id
+  from public.question_rounds qr
+  where qr.match_id = p_match_id and qr.status in ('revealed', 'passed')
+  order by qr.round_no desc
+  limit 1;
+
+  if v_round_id is null then
+    perform public.request_next_question(p_match_id);
+    return;
+  end if;
+
+  if uid = v_low then
+    update public.question_rounds set low_next = true where id = v_round_id;
+  else
+    update public.question_rounds set high_next = true where id = v_round_id;
+  end if;
+
+  if exists (
+    select 1 from public.question_rounds qr
+    where qr.id = v_round_id and qr.low_next and qr.high_next
+  ) then
+    perform public.request_next_question(p_match_id);
+  end if;
+end;
+$$;
+
+revoke execute on function public.ready_for_next(uuid) from public, anon;
+grant execute on function public.ready_for_next(uuid) to authenticated;
 
 -- Stream round changes (new question, both-submitted reveal, pass) live.
 do $$

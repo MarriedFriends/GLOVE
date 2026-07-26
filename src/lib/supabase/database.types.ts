@@ -328,6 +328,8 @@ export interface Database {
           status: "active" | "revealed" | "passed";
           low_submitted: boolean;
           high_submitted: boolean;
+          low_next: boolean;
+          high_next: boolean;
           passed_by: string | null;
           created_at: string;
           revealed_at: string | null;
@@ -340,6 +342,8 @@ export interface Database {
           status?: "active" | "revealed" | "passed";
           low_submitted?: boolean;
           high_submitted?: boolean;
+          low_next?: boolean;
+          high_next?: boolean;
           passed_by?: string | null;
           created_at?: string;
           revealed_at?: string | null;
@@ -352,6 +356,8 @@ export interface Database {
           status?: "active" | "revealed" | "passed";
           low_submitted?: boolean;
           high_submitted?: boolean;
+          low_next?: boolean;
+          high_next?: boolean;
           passed_by?: string | null;
           created_at?: string;
           revealed_at?: string | null;
@@ -480,6 +486,10 @@ export interface Database {
     Views: Record<never, never>;
     Functions: {
       request_next_question: {
+        Args: { p_match_id: string };
+        Returns: undefined;
+      };
+      ready_for_next: {
         Args: { p_match_id: string };
         Returns: undefined;
       };

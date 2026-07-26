@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
@@ -67,29 +66,11 @@ export default async function ChatPage({
 
   return (
     <div className="flex h-dvh flex-col bg-gradient-to-b from-rose-50 via-white to-white font-sans dark:from-rose-950/30 dark:via-black dark:to-black">
-      {/* Header */}
-      <div className="flex items-center gap-3 border-b border-black/[.06] bg-white/70 px-5 py-3 backdrop-blur dark:border-white/[.08] dark:bg-black/40">
-        <Link
-          href="/matches"
-          className="text-sm font-medium text-zinc-500 dark:text-zinc-400"
-        >
-          ←
-        </Link>
-        <span className="text-2xl">{emoji}</span>
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-semibold text-zinc-900 dark:text-white">
-            {other?.handle ?? "알 수 없음"}
-          </p>
-          <p className="text-xs text-zinc-400 dark:text-zinc-500">
-            익명 채팅 — 서로 원할 때만 정체를 공개하세요
-          </p>
-        </div>
-      </div>
-
       <ChatRoom
         matchId={match.id}
         myId={user.id}
         userLow={match.user_low}
+        other={{ handle: other?.handle ?? "알 수 없음", emoji }}
         initialMessages={messages ?? []}
         questions={questions}
         initialRounds={rounds}
