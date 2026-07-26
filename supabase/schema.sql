@@ -32,6 +32,11 @@ create table if not exists public.profiles (
                    ('dog','cat','fox','snake','mouse','bear','rabbit')),
   mbti           text check (mbti ~ '^[IE][NS][TF][PJ]$'),
   hobbies        text[] not null default '{}',
+  smoking        text check (smoking in ('none','vape','smoker')),
+  date_freq      text check (date_freq in ('daily','often','weekly','rarely')),
+  military       text check (military in ('served','not_yet','exempt','na')),
+  style          text check (style in
+                   ('pure','chic','cute','hip','dandy','lovely','vintage','natural')),
   bio            text check (char_length(bio) <= 500),
   avatar_url     text,
   is_verified    boolean not null default false,        -- confirmed student email
@@ -49,7 +54,12 @@ alter table public.profiles
   add column if not exists face_type text check (face_type in
     ('dog','cat','fox','snake','mouse','bear','rabbit')),
   add column if not exists mbti text check (mbti ~ '^[IE][NS][TF][PJ]$'),
-  add column if not exists hobbies text[] not null default '{}';
+  add column if not exists hobbies text[] not null default '{}',
+  add column if not exists smoking text check (smoking in ('none','vape','smoker')),
+  add column if not exists date_freq text check (date_freq in ('daily','often','weekly','rarely')),
+  add column if not exists military text check (military in ('served','not_yet','exempt','na')),
+  add column if not exists style text check (style in
+    ('pure','chic','cute','hip','dandy','lovely','vintage','natural'));
 -- A profile is "onboarded" (ready for discovery) once gender + interested_in
 -- are set. The matching attributes are NULL until the user completes onboarding.
 
@@ -72,12 +82,22 @@ create table if not exists public.match_preferences (
   face_types         text[] not null default '{}',
   hobby              text,
   intro              text not null check (char_length(intro) between 10 and 80),
+  nonsmoker_only     boolean not null default false,
+  military_only      boolean not null default false,
+  pref_date_freqs    text[] not null default '{}',   -- empty = any frequency
+  pref_styles        text[] not null default '{}',   -- empty = no style bonus
   updated_at         timestamptz not null default now(),
   primary key (user_id, mode),
   check (min_age <= max_age),
   check (min_admission_year <= max_admission_year),
   check (min_height_idx <= max_height_idx)
 );
+
+alter table public.match_preferences
+  add column if not exists nonsmoker_only boolean not null default false,
+  add column if not exists military_only boolean not null default false,
+  add column if not exists pref_date_freqs text[] not null default '{}',
+  add column if not exists pref_styles text[] not null default '{}';
 
 alter table public.match_preferences enable row level security;
 
@@ -263,8 +283,9 @@ create policy "Read messages in own active matches"
     )
   );
 
--- Send a message only as yourself, into an active match you belong to, and
--- only if neither participant has blocked the other.
+-- Send a message only as yourself, into an active match you belong to that
+-- hasn't passed its 48-hour lifetime, and only if neither side blocked the
+-- other.
 drop policy if exists "Send messages in own active matches" on public.messages;
 create policy "Send messages in own active matches"
   on public.messages for insert
@@ -275,6 +296,7 @@ create policy "Send messages in own active matches"
       select 1 from public.matches m
       where m.id = match_id
         and m.status = 'active'
+        and m.created_at > now() - interval '48 hours'
         and (select auth.uid()) in (m.user_low, m.user_high)
         and not exists (
           select 1 from public.blocks b
@@ -336,6 +358,8 @@ create trigger on_auth_user_created
   for each row execute function public.handle_new_user();
 
 -- On a positive like: if the other person already liked back, create the match.
+-- One chat at a time: no match is created while either person is inside a
+-- live (48h) chat — the like stays recorded and can connect later.
 -- Runs as security definer so it can write `matches` even though clients can't.
 create or replace function public.handle_like()
 returns trigger
@@ -345,6 +369,16 @@ set search_path = ''
 as $$
 begin
   if new.is_like is not true then
+    return new;
+  end if;
+
+  if exists (
+    select 1 from public.matches m
+    where m.status = 'active'
+      and m.created_at > now() - interval '48 hours'
+      and (new.liker_id in (m.user_low, m.user_high)
+        or new.likee_id in (m.user_low, m.user_high))
+  ) then
     return new;
   end if;
 
@@ -379,7 +413,8 @@ create trigger on_like_created
 --   +20  MBTI chemistry (same N/S +8; complementary E/I, T/F, P/J +4 each)
 --   +20  I also satisfy THEIR saved filters (mutual fit)
 -- ===========================================================================
-create or replace function public.find_candidates(max_results int default 5)
+drop function if exists public.find_candidates(int);
+create function public.find_candidates(max_results int default 5)
 returns table (
   candidate_id   uuid,
   handle         text,
@@ -390,6 +425,10 @@ returns table (
   face_type      text,
   mbti           text,
   hobbies        text[],
+  smoking        text,
+  date_freq      text,
+  military       text,
+  style          text,
   intro          text,
   score          int
 )
@@ -407,7 +446,9 @@ as $$
            p.height_range, p.face_type, p.mbti, p.hobbies,
            mp.min_age, mp.max_age, mp.min_admission_year, mp.max_admission_year,
            mp.same_university, mp.min_height_idx, mp.max_height_idx,
-           mp.face_types as pref_faces
+           mp.face_types as pref_faces,
+           mp.nonsmoker_only, mp.military_only,
+           mp.pref_date_freqs, mp.pref_styles
     from public.profiles p
     join public.match_preferences mp
       on mp.user_id = p.id and mp.mode = 'date'
@@ -423,6 +464,10 @@ as $$
     c.face_type,
     c.mbti,
     c.hobbies,
+    c.smoking,
+    c.date_freq,
+    c.military,
+    c.style,
     cmp.intro,
     (
       case when c.face_type = any(me.pref_faces) then 30 else 0 end
@@ -433,6 +478,8 @@ as $$
       + case when substr(me.mbti, 1, 1) <> substr(c.mbti, 1, 1) then 4 else 0 end
       + case when substr(me.mbti, 3, 1) <> substr(c.mbti, 3, 1) then 4 else 0 end
       + case when substr(me.mbti, 4, 1) <> substr(c.mbti, 4, 1) then 4 else 0 end
+      + case when c.style is not null and c.style = any(me.pref_styles)
+             then 10 else 0 end
       + case when cmp.user_id is not null
               and (extract(year from now())::int - me.birth_year)
                     between cmp.min_age and cmp.max_age
@@ -463,6 +510,17 @@ as $$
     and (array_position(h.arr, c.height_range) - 1)
           between me.min_height_idx and me.max_height_idx
     and (not me.same_university or c.university = me.university)
+    and (not me.nonsmoker_only or c.smoking = 'none')
+    and (not me.military_only or c.military = 'served')
+    and (coalesce(cardinality(me.pref_date_freqs), 0) = 0
+         or c.date_freq = any(me.pref_date_freqs))
+    -- One chat at a time: skip candidates currently inside a live chat.
+    and not exists (
+      select 1 from public.matches mb
+      where c.id in (mb.user_low, mb.user_high)
+        and mb.status = 'active'
+        and mb.created_at > now() - interval '48 hours'
+    )
     and not exists (
       select 1 from public.blocks b
       where (b.blocker_id = me.id and b.blocked_id = c.id)
@@ -477,7 +535,7 @@ as $$
       where m.user_low = least(me.id, c.id)
         and m.user_high = greatest(me.id, c.id)
     )
-  order by 11 desc, c.created_at desc
+  order by 15 desc, c.created_at desc
   limit max_results
 $$;
 
@@ -507,7 +565,8 @@ create policy "Read own picks"
   using (user_id = (select auth.uid()));
 -- No INSERT policy: rows are written only by the security-definer function.
 
-create or replace function public.get_daily_candidates()
+drop function if exists public.get_daily_candidates();
+create function public.get_daily_candidates()
 returns table (
   candidate_id   uuid,
   handle         text,
@@ -518,6 +577,10 @@ returns table (
   face_type      text,
   mbti           text,
   hobbies        text[],
+  smoking        text,
+  date_freq      text,
+  military       text,
+  style          text,
   intro          text,
   score          int,
   liked          boolean
@@ -571,6 +634,10 @@ begin
     c.face_type,
     c.mbti,
     c.hobbies,
+    c.smoking,
+    c.date_freq,
+    c.military,
+    c.style,
     cmp.intro,
     dp.score,
     exists (
@@ -793,6 +860,7 @@ begin
     select 1 from public.matches m
     where m.id = p_match_id
       and m.status = 'active'
+      and m.created_at > now() - interval '48 hours'
       and uid in (m.user_low, m.user_high)
   ) then
     raise exception 'not a participant of this match';
@@ -905,6 +973,82 @@ begin
       and tablename = 'question_rounds'
   ) then
     alter publication supabase_realtime add table public.question_rounds;
+  end if;
+end $$;
+
+-- ===========================================================================
+-- Contact exchange: after a chat's 48 hours end, each side may share their
+-- Instagram/KakaoTalk. A shared contact becomes visible to the other person
+-- only once THEY have shared too (mutual reveal, same spirit as questions).
+-- ===========================================================================
+create table if not exists public.contact_reveals (
+  match_id   uuid not null references public.matches (id) on delete cascade,
+  user_id    uuid not null references public.profiles (id) on delete cascade,
+  contact    text not null check (char_length(contact) between 1 and 100),
+  created_at timestamptz not null default now(),
+  primary key (match_id, user_id)
+);
+
+alter table public.contact_reveals enable row level security;
+
+-- Helper (security definer) so the select policy can check "did I share?"
+-- without recursing into its own RLS.
+create or replace function public.has_shared_contact(p_match_id uuid, p_user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.contact_reveals cr
+    where cr.match_id = p_match_id and cr.user_id = p_user_id
+  );
+$$;
+
+revoke execute on function public.has_shared_contact(uuid, uuid) from public, anon;
+grant execute on function public.has_shared_contact(uuid, uuid) to authenticated;
+
+drop policy if exists "Share own contact after chat ends" on public.contact_reveals;
+create policy "Share own contact after chat ends"
+  on public.contact_reveals for insert
+  to authenticated
+  with check (
+    user_id = (select auth.uid())
+    and exists (
+      select 1 from public.matches m
+      where m.id = contact_reveals.match_id
+        and m.status = 'active'
+        and m.created_at <= now() - interval '48 hours'
+        and (select auth.uid()) in (m.user_low, m.user_high)
+    )
+  );
+
+drop policy if exists "Read contacts mutually" on public.contact_reveals;
+create policy "Read contacts mutually"
+  on public.contact_reveals for select
+  to authenticated
+  using (
+    user_id = (select auth.uid())
+    or (
+      exists (
+        select 1 from public.matches m
+        where m.id = contact_reveals.match_id
+          and (select auth.uid()) in (m.user_low, m.user_high)
+      )
+      and public.has_shared_contact(contact_reveals.match_id, (select auth.uid()))
+    )
+  );
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'contact_reveals'
+  ) then
+    alter publication supabase_realtime add table public.contact_reveals;
   end if;
 end $$;
 

@@ -8,6 +8,7 @@ import { MAX_RECORD_SECONDS, modulateVoice } from "@/lib/voice";
 import type { Database } from "@/lib/supabase/database.types";
 
 type Message = Database["public"]["Tables"]["messages"]["Row"];
+type Contact = Database["public"]["Tables"]["contact_reveals"]["Row"];
 type Question = Database["public"]["Tables"]["questions"]["Row"];
 type Round = Database["public"]["Tables"]["question_rounds"]["Row"];
 type Answer = Database["public"]["Tables"]["question_answers"]["Row"];
@@ -20,6 +21,7 @@ const STAGE_NAMES: Record<number, string> = {
 };
 
 const SILENCE_MS = 3 * 60 * 1000; // 3 minutes of quiet → next question
+const CHAT_LIFETIME_MS = 48 * 3600 * 1000; // chats last 48 hours
 const STALE_ROUND_MS = 10 * 60 * 1000; // unanswered 10 min → system skips it
 
 /**
@@ -32,6 +34,8 @@ export function ChatRoom({
   myId,
   userLow,
   other,
+  matchCreatedAt,
+  initialContacts,
   initialMessages,
   questions,
   initialRounds,
@@ -41,6 +45,8 @@ export function ChatRoom({
   myId: string;
   userLow: string;
   other: { handle: string; emoji: string };
+  matchCreatedAt: string;
+  initialContacts: Contact[];
   initialMessages: Message[];
   questions: Question[];
   initialRounds: Round[];
@@ -57,6 +63,19 @@ export function ChatRoom({
   const [text, setText] = useState("");
   const [draft, setDraft] = useState("");
   const [panelOpen, setPanelOpen] = useState(false);
+  const [contacts, setContacts] = useState<Contact[]>(initialContacts);
+  const [contactDraft, setContactDraft] = useState("");
+  const [contactSending, setContactSending] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  const expiresAtMs = +new Date(matchCreatedAt) + CHAT_LIFETIME_MS;
+  const expired = now >= expiresAtMs;
+
+  // Tick every 30s so the countdown and the expiry flip stay current.
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
   const [sending, setSending] = useState(false);
   const [answerSending, setAnswerSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +111,32 @@ export function ChatRoom({
       next[i] = r;
       return next;
     });
+  }
+
+  async function fetchContacts() {
+    const { data } = await supabase
+      .from("contact_reveals")
+      .select("*")
+      .eq("match_id", matchId);
+    if (data) setContacts(data);
+  }
+
+  async function submitContact(e: React.FormEvent) {
+    e.preventDefault();
+    const contact = contactDraft.trim();
+    if (!contact || contactSending) return;
+    setContactSending(true);
+    setError(null);
+    const { error: insertError } = await supabase
+      .from("contact_reveals")
+      .insert({ match_id: matchId, user_id: myId, contact });
+    setContactSending(false);
+    if (insertError) {
+      setError("연락처를 공개하지 못했어요. 다시 시도해주세요.");
+      return;
+    }
+    setContactDraft("");
+    fetchContacts();
   }
 
   async function fetchAnswers(roundId: string) {
@@ -145,6 +190,16 @@ export function ChatRoom({
           if (r.status === "revealed") fetchAnswers(r.id); // 동시 공개
         },
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "contact_reveals",
+          filter: `match_id=eq.${matchId}`,
+        },
+        () => fetchContacts(),
+      )
       .subscribe();
 
     return () => {
@@ -159,7 +214,7 @@ export function ChatRoom({
 
   // Old matches created before the curriculum: pull the first question once.
   useEffect(() => {
-    if (initialRounds.length === 0) {
+    if (initialRounds.length === 0 && !expired) {
       supabase.rpc("request_next_question", { p_match_id: matchId });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -170,6 +225,7 @@ export function ChatRoom({
   // 10 minutes is skipped server-side. No user controls involved.
   useEffect(() => {
     const interval = setInterval(() => {
+      if (expired) return;
       const staleActive =
         activeRound &&
         Date.now() - +new Date(activeRound.created_at) >= STALE_ROUND_MS;
@@ -186,7 +242,7 @@ export function ChatRoom({
       }
     }, 10_000);
     return () => clearInterval(interval);
-  }, [supabase, matchId, activeRound, remainingQuestions, messages, rounds]);
+  }, [supabase, matchId, activeRound, remainingQuestions, messages, rounds, expired]);
 
   function appendMessage(m: Message) {
     setMessages((prev) =>
@@ -376,8 +432,13 @@ export function ChatRoom({
             <span className="block truncate font-semibold text-zinc-900 dark:text-white">
               {other.handle}
             </span>
-            <span className="block text-xs text-zinc-400 dark:text-zinc-500">
-              아이콘을 누르면 상대의 답변 모음을 볼 수 있어요
+            <span
+              suppressHydrationWarning
+              className={`block text-xs ${expired ? "font-semibold text-rose-500" : "text-zinc-400 dark:text-zinc-500"}`}
+            >
+              {expired
+                ? "⏰ 48시간 채팅이 종료됐어요"
+                : `⏳ 남은 시간 ${Math.floor((expiresAtMs - now) / 3600000)}시간 ${Math.floor(((expiresAtMs - now) % 3600000) / 60000)}분 · 아이콘을 누르면 상대의 답변 모음`}
             </span>
           </span>
         </button>
@@ -462,7 +523,63 @@ export function ChatRoom({
         {error && (
           <p className="mb-2 text-center text-xs text-red-500">{error}</p>
         )}
-        {recState === "recording" ? (
+        {expired ? (
+          (() => {
+            const myContact = contacts.find((c) => c.user_id === myId);
+            const theirContact = contacts.find((c) => c.user_id !== myId);
+            if (myContact && theirContact) {
+              return (
+                <div className="rounded-2xl bg-gradient-to-r from-rose-500 to-pink-500 p-5 text-center text-white">
+                  <p className="text-2xl">🎉</p>
+                  <p className="mt-1 text-sm font-semibold">
+                    연락처가 교환됐어요! 이제 밖에서 만나요
+                  </p>
+                  <p className="mt-2 rounded-xl bg-white/20 px-4 py-2.5 text-base font-bold">
+                    {other.handle}: {theirContact.contact}
+                  </p>
+                </div>
+              );
+            }
+            if (myContact) {
+              return (
+                <div className="py-2 text-center">
+                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                    ⏳ 상대의 공개를 기다리고 있어요
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-400 dark:text-zinc-500">
+                    상대도 공개하면 서로의 연락처가 동시에 보여요 (내 공개:{" "}
+                    {myContact.contact})
+                  </p>
+                </div>
+              );
+            }
+            return (
+              <form onSubmit={submitContact}>
+                <p className="mb-2 text-center text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                  48시간이 끝났어요 — 더 이어가고 싶다면 연락처를 공개하세요
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={contactDraft}
+                    onChange={(e) => setContactDraft(e.target.value)}
+                    maxLength={100}
+                    placeholder="인스타 @glove_kim 또는 카톡 ID"
+                    className="flex-1 rounded-full border border-black/[.1] bg-white px-4 py-2.5 text-sm outline-none focus:border-rose-400 dark:border-white/[.15] dark:bg-zinc-900"
+                  />
+                  <button
+                    disabled={!contactDraft.trim() || contactSending}
+                    className="rounded-full bg-gradient-to-r from-rose-500 to-pink-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-rose-500/30 disabled:opacity-40"
+                  >
+                    공개
+                  </button>
+                </div>
+                <p className="mt-1.5 text-center text-[10px] text-zinc-400 dark:text-zinc-600">
+                  서로 공개해야만 상대에게 보여요 · 공개하지 않으면 그대로 안녕
+                </p>
+              </form>
+            );
+          })()
+        ) : recState === "recording" ? (
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-2 text-sm font-medium text-red-500">
               <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />

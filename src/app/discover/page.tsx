@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
-import { isProfileComplete } from "@/lib/profile";
+import { isProfileComplete, SURVEY_FIELDS } from "@/lib/profile";
 import { DiscoverList } from "./DiscoverList";
 
 export default async function DiscoverPage({
@@ -22,7 +22,7 @@ export default async function DiscoverPage({
   const [profileRes, prefsRes, candidatesRes] = await Promise.all([
     supabase
       .from("profiles")
-      .select("gender, admission_year, height_range, face_type, mbti")
+      .select(SURVEY_FIELDS)
       .eq("id", user.id)
       .single(),
     supabase

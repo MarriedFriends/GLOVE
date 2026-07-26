@@ -4,11 +4,20 @@ import { useState } from "react";
 
 import {
   FACE_OPTIONS,
+  SMOKING_OPTIONS,
+  DATE_FREQ_OPTIONS,
+  MILITARY_OPTIONS,
+  STYLE_OPTIONS,
   HEIGHT_BUCKETS,
   formatHeight,
 } from "@/lib/onboarding-options";
 import type { Database } from "@/lib/supabase/database.types";
 import { sendLike } from "./actions";
+
+const label = (
+  options: readonly { value: string; label: string; emoji: string }[],
+  value: string | null,
+) => options.find((o) => o.value === value);
 
 type Candidate =
   Database["public"]["Functions"]["get_daily_candidates"]["Returns"][number];
@@ -91,6 +100,26 @@ export function DiscoverList({
         if (prefs.hobby && c.hobbies.includes(prefs.hobby)) {
           matchedChips.push(`취미 ${prefs.hobby}`);
         }
+        if (prefs.nonsmoker_only && c.smoking === "none") {
+          matchedChips.push("🚭 비흡연");
+        }
+        if (prefs.military_only && c.military === "served") {
+          matchedChips.push("🎖️ 군필");
+        }
+        if (
+          prefs.pref_date_freqs.length > 0 &&
+          c.date_freq &&
+          prefs.pref_date_freqs.includes(c.date_freq)
+        ) {
+          matchedChips.push(
+            `${label(DATE_FREQ_OPTIONS, c.date_freq)?.emoji ?? ""} ${label(DATE_FREQ_OPTIONS, c.date_freq)?.label ?? ""}`,
+          );
+        }
+        if (c.style && prefs.pref_styles.includes(c.style)) {
+          matchedChips.push(
+            `${label(STYLE_OPTIONS, c.style)?.emoji ?? ""} 추구미 ${label(STYLE_OPTIONS, c.style)?.label ?? ""}`,
+          );
+        }
 
         return (
           <div
@@ -155,6 +184,17 @@ export function DiscoverList({
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
                   {formatHeight(c.height_range)} ·{" "}
                   {face ? `${face.emoji} ${face.label}` : c.face_type} · {c.mbti}
+                </p>
+                <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                  {[
+                    label(SMOKING_OPTIONS, c.smoking)?.label,
+                    label(MILITARY_OPTIONS, c.military)?.label,
+                    label(STYLE_OPTIONS, c.style) &&
+                      `추구미 ${label(STYLE_OPTIONS, c.style)?.label}`,
+                    label(DATE_FREQ_OPTIONS, c.date_freq)?.label,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </p>
 
                 {c.hobbies.length > 0 && (

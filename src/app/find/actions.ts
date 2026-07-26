@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 
 import { createClient } from "@/lib/supabase/server";
 import {
+  DATE_FREQ_OPTIONS,
+  STYLE_OPTIONS,
   MIN_ADMISSION_YEAR,
   MAX_ADMISSION_YEAR,
   MIN_AGE,
@@ -35,6 +37,10 @@ export async function savePreferences(formData: FormData) {
   const faceTypes = formData.getAll("face_types").map(String);
   const hobby = String(formData.get("hobby") ?? "");
   const intro = String(formData.get("intro") ?? "").trim();
+  const nonsmokerOnly = formData.get("nonsmoker_only") === "true";
+  const militaryOnly = formData.get("military_only") === "true";
+  const prefDateFreqs = formData.getAll("pref_date_freqs").map(String);
+  const prefStyles = formData.getAll("pref_styles").map(String);
 
   const validRange = (lo: number, hi: number, min: number, max: number) =>
     Number.isInteger(lo) &&
@@ -66,6 +72,15 @@ export async function savePreferences(formData: FormData) {
   if (intro.length < 10 || intro.length > 80) {
     fail("자기소개는 10~80자로 적어주세요.");
   }
+  if (
+    prefDateFreqs.length < 1 ||
+    !prefDateFreqs.every((f) => DATE_FREQ_OPTIONS.some((o) => o.value === f))
+  ) {
+    fail("데이트 주기를 하나 이상 골라주세요.");
+  }
+  if (!prefStyles.every((st) => STYLE_OPTIONS.some((o) => o.value === st))) {
+    fail("추구미 선택이 올바르지 않아요.");
+  }
 
   const { error } = await supabase.from("match_preferences").upsert({
     user_id: user.id,
@@ -80,6 +95,10 @@ export async function savePreferences(formData: FormData) {
     face_types: faceTypes,
     hobby,
     intro,
+    nonsmoker_only: nonsmokerOnly,
+    military_only: militaryOnly,
+    pref_date_freqs: prefDateFreqs,
+    pref_styles: prefStyles,
     updated_at: new Date().toISOString(),
   });
 

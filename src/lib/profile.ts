@@ -22,7 +22,7 @@ export async function getMyProfile() {
 
 /** The survey fields that must be answered before a profile is "onboarded". */
 export const SURVEY_FIELDS =
-  "gender, admission_year, height_range, face_type, mbti" as const;
+  "gender, admission_year, height_range, face_type, mbti, smoking, date_freq, military, style" as const;
 
 /**
  * A profile counts as "onboarded" once every survey question is answered.
@@ -35,6 +35,10 @@ export function isProfileComplete(
     height_range: string | null;
     face_type: string | null;
     mbti: string | null;
+    smoking: string | null;
+    date_freq: string | null;
+    military: string | null;
+    style: string | null;
   } | null,
 ): boolean {
   return Boolean(
@@ -42,6 +46,10 @@ export function isProfileComplete(
       profile?.admission_year &&
       profile?.height_range &&
       profile?.face_type &&
-      profile?.mbti,
+      profile?.mbti &&
+      profile?.smoking &&
+      profile?.date_freq &&
+      profile?.military &&
+      profile?.style,
   );
 }

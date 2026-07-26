@@ -75,6 +75,37 @@ export const MBTI_PAIRS = [
   },
 ] as const;
 
+export const SMOKING_OPTIONS = [
+  { value: "none", label: "비흡연", emoji: "🚭" },
+  { value: "vape", label: "전자담배", emoji: "💨" },
+  { value: "smoker", label: "흡연", emoji: "🚬" },
+] as const;
+
+export const DATE_FREQ_OPTIONS = [
+  { value: "daily", label: "매일 보고 싶어요", emoji: "🌞" },
+  { value: "often", label: "일주일에 2~3번", emoji: "💕" },
+  { value: "weekly", label: "일주일에 1번", emoji: "📅" },
+  { value: "rarely", label: "여유롭게 가끔", emoji: "🍃" },
+] as const;
+
+export const MILITARY_OPTIONS = [
+  { value: "served", label: "군필", emoji: "🎖️" },
+  { value: "not_yet", label: "미필", emoji: "⏳" },
+  { value: "exempt", label: "면제", emoji: "📋" },
+  { value: "na", label: "해당 없음", emoji: "🙅" },
+] as const;
+
+export const STYLE_OPTIONS = [
+  { value: "pure", label: "청순", emoji: "🕊️" },
+  { value: "chic", label: "시크", emoji: "🖤" },
+  { value: "cute", label: "큐트", emoji: "🍑" },
+  { value: "hip", label: "힙", emoji: "🔥" },
+  { value: "dandy", label: "댄디", emoji: "🤵" },
+  { value: "lovely", label: "러블리", emoji: "💖" },
+  { value: "vintage", label: "빈티지", emoji: "📻" },
+  { value: "natural", label: "꾸안꾸", emoji: "🌿" },
+] as const;
+
 export const HOBBY_OPTIONS = [
   "운동·헬스",
   "러닝",

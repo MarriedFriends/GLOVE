@@ -20,13 +20,14 @@ export default async function ChatPage({
   // RLS returns the match only if I'm a participant.
   const { data: match } = await supabase
     .from("matches")
-    .select("id, user_low, user_high, status")
+    .select("id, user_low, user_high, status, created_at")
     .eq("id", id)
     .maybeSingle();
   if (!match || match.status !== "active") redirect("/matches");
 
   const otherId = match.user_low === user.id ? match.user_high : match.user_low;
-  const [otherRes, messagesRes, questionsRes, roundsRes] = await Promise.all([
+  const [otherRes, messagesRes, questionsRes, roundsRes, contactsRes] =
+    await Promise.all([
     supabase
       .from("profiles")
       .select("handle, face_type")
@@ -44,11 +45,13 @@ export default async function ChatPage({
       .select("*")
       .eq("match_id", match.id)
       .order("round_no", { ascending: true }),
+    supabase.from("contact_reveals").select("*").eq("match_id", match.id),
   ]);
   const other = otherRes.data;
   const messages = messagesRes.data;
   const questions = questionsRes.data ?? [];
   const rounds = roundsRes.data ?? [];
+  const contacts = contactsRes.data ?? [];
 
   // Answers visible to me right now (mine + those in revealed rounds).
   const { data: answers } = rounds.length
@@ -71,6 +74,8 @@ export default async function ChatPage({
         myId={user.id}
         userLow={match.user_low}
         other={{ handle: other?.handle ?? "알 수 없음", emoji }}
+        matchCreatedAt={match.created_at}
+        initialContacts={contacts}
         initialMessages={messages ?? []}
         questions={questions}
         initialRounds={rounds}

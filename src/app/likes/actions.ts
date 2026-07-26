@@ -19,6 +19,22 @@ export async function acceptLike(formData: FormData) {
   const likerId = String(formData.get("liker_id") ?? "");
   if (!likerId) redirect("/likes");
 
+  // One chat at a time: can't accept while my current 48h chat is running.
+  const { data: myMatches } = await supabase
+    .from("matches")
+    .select("created_at")
+    .eq("status", "active");
+  const busy = (myMatches ?? []).some(
+    (m) => Date.now() - +new Date(m.created_at) < 48 * 3600 * 1000,
+  );
+  if (busy) {
+    redirect(
+      `/likes?error=${encodeURIComponent(
+        "지금 진행 중인 채팅이 있어요. 48시간 채팅이 끝난 뒤에 수락할 수 있어요.",
+      )}`,
+    );
+  }
+
   // Verify they really liked me (visible via the "Read likes received" policy).
   const { data: theirLike } = await supabase
     .from("likes")

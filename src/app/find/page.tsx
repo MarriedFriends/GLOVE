@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
-import { isProfileComplete } from "@/lib/profile";
+import { isProfileComplete, SURVEY_FIELDS } from "@/lib/profile";
 import { FindWizard } from "./FindWizard";
 
 export default async function FindPage({
@@ -21,7 +21,7 @@ export default async function FindPage({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("gender, admission_year, height_range, face_type, mbti")
+    .select(SURVEY_FIELDS)
     .eq("id", user.id)
     .single();
   if (!isProfileComplete(profile)) redirect("/onboarding");

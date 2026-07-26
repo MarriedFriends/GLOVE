@@ -19,6 +19,7 @@ export default async function Home() {
   let hasDatePrefs = false;
   let matchCount = 0;
   let incomingLikes = 0;
+  let activeChat: { id: string } | null = null;
   if (user) {
     const [profileRes, prefsRes, matchRes, likesRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user.id).single(),
@@ -28,7 +29,7 @@ export default async function Home() {
         .eq("user_id", user.id)
         .eq("mode", "date")
         .maybeSingle(),
-      supabase.from("matches").select("user_low, user_high, status"),
+      supabase.from("matches").select("id, user_low, user_high, status, created_at"),
       supabase
         .from("likes")
         .select("liker_id")
@@ -41,6 +42,12 @@ export default async function Home() {
 
     const matches = matchRes.data ?? [];
     matchCount = matches.filter((m) => m.status === "active").length;
+    activeChat =
+      matches.find(
+        (m) =>
+          m.status === "active" &&
+          Date.now() - +new Date(m.created_at) < 48 * 3600 * 1000,
+      ) ?? null;
 
     // Incoming likes that haven't already turned into a match.
     const matchedIds = new Set(
@@ -114,14 +121,20 @@ export default async function Home() {
                 )}
               </Link>
               <Link
-                href="/matches"
+                href={activeChat ? `/chat/${activeChat.id}` : "/matches"}
                 className="flex items-center justify-center gap-2 rounded-2xl border border-black/[.08] bg-white/60 px-4 py-3.5 text-sm font-semibold text-zinc-700 transition-colors hover:border-rose-300 dark:border-white/[.12] dark:bg-white/[.03] dark:text-zinc-200 dark:hover:border-rose-700"
               >
-                💬 내 매칭
-                {matchCount > 0 && (
+                💬 채팅
+                {activeChat ? (
                   <span className="rounded-full bg-rose-500 px-2 py-0.5 text-xs font-bold text-white">
-                    {matchCount}
+                    진행 중
                   </span>
+                ) : (
+                  matchCount > 0 && (
+                    <span className="rounded-full bg-zinc-300 px-2 py-0.5 text-xs font-bold text-white dark:bg-zinc-700">
+                      {matchCount}
+                    </span>
+                  )
                 )}
               </Link>
             </div>

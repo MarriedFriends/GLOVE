@@ -3,6 +3,8 @@
 import { useState } from "react";
 
 import {
+  DATE_FREQ_OPTIONS,
+  STYLE_OPTIONS,
   MIN_ADMISSION_YEAR,
   MAX_ADMISSION_YEAR,
   MIN_AGE,
@@ -14,7 +16,7 @@ import {
 import { RangeSlider } from "./RangeSlider";
 import { savePreferences } from "./actions";
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 8;
 
 const bigButton =
   "flex flex-col items-center justify-center gap-2 rounded-2xl border-2 p-5 text-base font-semibold transition-all";
@@ -51,6 +53,12 @@ export function FindWizard({ error }: { error?: string }) {
     HEIGHT_BUCKETS.length - 1,
   ]);
   const [faceTypes, setFaceTypes] = useState<string[]>([]);
+  const [nonsmokerOnly, setNonsmokerOnly] = useState(false);
+  const [militaryOnly, setMilitaryOnly] = useState(false);
+  const [dateFreqs, setDateFreqs] = useState<string[]>(
+    DATE_FREQ_OPTIONS.map((o) => o.value),
+  );
+  const [styles, setStyles] = useState<string[]>([]);
   const [hobby, setHobby] = useState<string | null>(null);
   const [intro, setIntro] = useState("");
 
@@ -60,6 +68,9 @@ export function FindWizard({ error }: { error?: string }) {
     true, // ranges + toggle always valid
     true,
     faceTypes.length >= 1,
+    true, // smoking/military radios have defaults
+    dateFreqs.length >= 1,
+    true, // styles: empty = no preference
     hobby !== null,
     introLength >= 10 && introLength <= 80,
   ][step];
@@ -73,6 +84,15 @@ export function FindWizard({ error }: { error?: string }) {
         ? prev.filter((f) => f !== value)
         : [...prev, value],
     );
+
+  const toggleIn =
+    (setter: React.Dispatch<React.SetStateAction<string[]>>) =>
+    (value: string) =>
+      setter((prev) =>
+        prev.includes(value)
+          ? prev.filter((v) => v !== value)
+          : [...prev, value],
+      );
 
   return (
     <div className="w-full max-w-md">
@@ -222,8 +242,115 @@ export function FindWizard({ error }: { error?: string }) {
         </section>
       )}
 
-      {/* Step 4 — one hobby to share */}
+      {/* Step 4 — smoking & military conditions */}
       {step === 3 && (
+        <section className="flex flex-col gap-8">
+          <h2 className="text-center text-2xl font-bold text-zinc-900 dark:text-white">
+            이런 조건도 있나요?
+          </h2>
+
+          <div>
+            <p className="mb-3 text-center text-sm text-zinc-500 dark:text-zinc-400">
+              상대의 흡연 여부
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setNonsmokerOnly(true)}
+                className={`${bigButton} ${nonsmokerOnly ? selected : unselected}`}
+              >
+                <span className="text-3xl">🚭</span>
+                비흡연자만
+              </button>
+              <button
+                type="button"
+                onClick={() => setNonsmokerOnly(false)}
+                className={`${bigButton} ${!nonsmokerOnly ? selected : unselected}`}
+              >
+                <span className="text-3xl">🤷</span>
+                상관없어요
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-3 text-center text-sm text-zinc-500 dark:text-zinc-400">
+              상대의 병역 사항
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setMilitaryOnly(true)}
+                className={`${bigButton} ${militaryOnly ? selected : unselected}`}
+              >
+                <span className="text-3xl">🎖️</span>
+                군필만
+              </button>
+              <button
+                type="button"
+                onClick={() => setMilitaryOnly(false)}
+                className={`${bigButton} ${!militaryOnly ? selected : unselected}`}
+              >
+                <span className="text-3xl">🤷</span>
+                상관없어요
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Step 5 — acceptable date frequencies */}
+      {step === 4 && (
+        <section>
+          <h2 className="mb-2 text-center text-2xl font-bold text-zinc-900 dark:text-white">
+            어떤 데이트 주기가 좋아요?
+          </h2>
+          <p className="mb-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
+            괜찮은 주기를 모두 골라주세요
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            {DATE_FREQ_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => toggleIn(setDateFreqs)(o.value)}
+                className={`${bigButton} ${dateFreqs.includes(o.value) ? selected : unselected}`}
+              >
+                <span className="text-3xl">{o.emoji}</span>
+                <span className="text-sm">{o.label}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Step 6 — preferred styles (추구미) */}
+      {step === 5 && (
+        <section>
+          <h2 className="mb-2 text-center text-2xl font-bold text-zinc-900 dark:text-white">
+            끌리는 추구미가 있나요?
+          </h2>
+          <p className="mb-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
+            여러 개 골라도, 안 골라도 돼요 (안 고르면 상관없음)
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            {STYLE_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => toggleIn(setStyles)(o.value)}
+                className={`${bigButton} ${styles.includes(o.value) ? selected : unselected}`}
+              >
+                <span className="text-3xl">{o.emoji}</span>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Step 7 — one hobby to share */}
+      {step === 6 && (
         <section>
           <h2 className="mb-2 text-center text-2xl font-bold text-zinc-900 dark:text-white">
             함께하고 싶은 취미 하나를 골라주세요
@@ -251,8 +378,8 @@ export function FindWizard({ error }: { error?: string }) {
         </section>
       )}
 
-      {/* Step 5 — intro message */}
-      {step === 4 && (
+      {/* Step 8 — intro message */}
+      {step === 7 && (
         <section>
           <h2 className="mb-2 text-center text-2xl font-bold text-zinc-900 dark:text-white">
             나를 소개하는 한마디
@@ -314,6 +441,22 @@ export function FindWizard({ error }: { error?: string }) {
             <input type="hidden" name="max_height_idx" value={heightRange[1]} />
             {faceTypes.map((f) => (
               <input key={f} type="hidden" name="face_types" value={f} />
+            ))}
+            <input
+              type="hidden"
+              name="nonsmoker_only"
+              value={nonsmokerOnly ? "true" : "false"}
+            />
+            <input
+              type="hidden"
+              name="military_only"
+              value={militaryOnly ? "true" : "false"}
+            />
+            {dateFreqs.map((f) => (
+              <input key={f} type="hidden" name="pref_date_freqs" value={f} />
+            ))}
+            {styles.map((st) => (
+              <input key={st} type="hidden" name="pref_styles" value={st} />
             ))}
             <input type="hidden" name="hobby" value={hobby ?? ""} />
             <input type="hidden" name="intro" value={intro.trim()} />

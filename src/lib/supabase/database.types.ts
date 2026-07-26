@@ -51,6 +51,10 @@ export interface Database {
           face_type: FaceType | null;
           mbti: string | null;
           hobbies: string[];
+          smoking: string | null;
+          date_freq: string | null;
+          military: string | null;
+          style: string | null;
           bio: string | null;
           avatar_url: string | null;
           is_verified: boolean;
@@ -69,6 +73,10 @@ export interface Database {
           face_type?: FaceType | null;
           mbti?: string | null;
           hobbies?: string[];
+          smoking?: string | null;
+          date_freq?: string | null;
+          military?: string | null;
+          style?: string | null;
           bio?: string | null;
           avatar_url?: string | null;
           is_verified?: boolean;
@@ -87,6 +95,10 @@ export interface Database {
           face_type?: FaceType | null;
           mbti?: string | null;
           hobbies?: string[];
+          smoking?: string | null;
+          date_freq?: string | null;
+          military?: string | null;
+          style?: string | null;
           bio?: string | null;
           avatar_url?: string | null;
           is_verified?: boolean;
@@ -109,6 +121,10 @@ export interface Database {
           face_types: string[];
           hobby: string | null;
           intro: string;
+          nonsmoker_only: boolean;
+          military_only: boolean;
+          pref_date_freqs: string[];
+          pref_styles: string[];
           updated_at: string;
         };
         Insert: {
@@ -124,6 +140,10 @@ export interface Database {
           face_types?: string[];
           hobby?: string | null;
           intro: string;
+          nonsmoker_only?: boolean;
+          military_only?: boolean;
+          pref_date_freqs?: string[];
+          pref_styles?: string[];
           updated_at?: string;
         };
         Update: {
@@ -139,6 +159,10 @@ export interface Database {
           face_types?: string[];
           hobby?: string | null;
           intro?: string;
+          nonsmoker_only?: boolean;
+          military_only?: boolean;
+          pref_date_freqs?: string[];
+          pref_styles?: string[];
           updated_at?: string;
         };
         Relationships: [
@@ -411,6 +435,40 @@ export interface Database {
           },
         ];
       };
+      contact_reveals: {
+        Row: {
+          match_id: string;
+          user_id: string;
+          contact: string;
+          created_at: string;
+        };
+        Insert: {
+          match_id: string;
+          user_id: string;
+          contact: string;
+          created_at?: string;
+        };
+        Update: {
+          match_id?: string;
+          user_id?: string;
+          contact?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "contact_reveals_match_id_fkey";
+            columns: ["match_id"];
+            referencedRelation: "matches";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "contact_reveals_user_id_fkey";
+            columns: ["user_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       blocks: {
         Row: {
           blocker_id: string;
@@ -505,6 +563,10 @@ export interface Database {
           face_type: FaceType;
           mbti: string;
           hobbies: string[];
+          smoking: string | null;
+          date_freq: string | null;
+          military: string | null;
+          style: string | null;
           intro: string | null;
           score: number;
           liked: boolean;
@@ -522,6 +584,10 @@ export interface Database {
           face_type: FaceType;
           mbti: string;
           hobbies: string[];
+          smoking: string | null;
+          date_freq: string | null;
+          military: string | null;
+          style: string | null;
           intro: string | null;
           score: number;
         }[];

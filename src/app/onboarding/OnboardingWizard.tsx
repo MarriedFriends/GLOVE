@@ -6,6 +6,10 @@ import { generateNickname } from "@/lib/nickname";
 
 import {
   GENDER_OPTIONS,
+  SMOKING_OPTIONS,
+  DATE_FREQ_OPTIONS,
+  MILITARY_OPTIONS,
+  STYLE_OPTIONS,
   MIN_ADMISSION_YEAR,
   MAX_ADMISSION_YEAR,
   MIN_AGE,
@@ -19,7 +23,7 @@ import {
 } from "@/lib/onboarding-options";
 import { saveOnboarding } from "./actions";
 
-const TOTAL_STEPS = 7;
+const TOTAL_STEPS = 11;
 
 const bigButton =
   "flex flex-col items-center justify-center gap-2 rounded-2xl border-2 p-6 text-lg font-semibold transition-all";
@@ -38,6 +42,10 @@ export function OnboardingWizard({ error }: { error?: string }) {
   const [face, setFace] = useState<string | null>(null);
   const [mbti, setMbti] = useState<Record<number, string>>({});
   const [hobbies, setHobbies] = useState<string[]>([]);
+  const [smoking, setSmoking] = useState<string | null>(null);
+  const [dateFreq, setDateFreq] = useState<string | null>(null);
+  const [military, setMilitary] = useState<string | null>(null);
+  const [style, setStyle] = useState<string | null>(null);
   const [nickname, setNickname] = useState<string | null>(null);
 
   const mbtiString = MBTI_PAIRS.map((_, i) => mbti[i] ?? "").join("");
@@ -45,7 +53,7 @@ export function OnboardingWizard({ error }: { error?: string }) {
   // Roll a fresh nickname every time the user arrives at the naming step
   // (answers may have changed if they went back and edited).
   useEffect(() => {
-    if (step === 6 && face) {
+    if (step === 10 && face) {
       setNickname(generateNickname(face, hobbies, mbtiString));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -58,6 +66,10 @@ export function OnboardingWizard({ error }: { error?: string }) {
     face !== null,
     mbtiString.length === 4,
     hobbies.length >= 1,
+    smoking !== null,
+    dateFreq !== null,
+    military !== null,
+    style !== null,
     nickname !== null,
   ][step];
 
@@ -303,8 +315,96 @@ export function OnboardingWizard({ error }: { error?: string }) {
         </section>
       )}
 
-      {/* Step 7 — pick your anonymous nickname */}
+      {/* Step 7 — smoking */}
       {step === 6 && (
+        <section>
+          <h2 className="mb-6 text-center text-2xl font-bold text-zinc-900 dark:text-white">
+            흡연 여부를 알려주세요
+          </h2>
+          <div className="grid grid-cols-3 gap-3">
+            {SMOKING_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => pick(setSmoking)(o.value)}
+                className={`${bigButton} ${smoking === o.value ? selected : unselected}`}
+              >
+                <span className="text-4xl">{o.emoji}</span>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Step 8 — date frequency */}
+      {step === 7 && (
+        <section>
+          <h2 className="mb-6 text-center text-2xl font-bold text-zinc-900 dark:text-white">
+            연애하면 얼마나 자주 만나고 싶어요?
+          </h2>
+          <div className="grid grid-cols-2 gap-3">
+            {DATE_FREQ_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => pick(setDateFreq)(o.value)}
+                className={`${bigButton} ${dateFreq === o.value ? selected : unselected}`}
+              >
+                <span className="text-4xl">{o.emoji}</span>
+                <span className="text-base">{o.label}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Step 9 — military service */}
+      {step === 8 && (
+        <section>
+          <h2 className="mb-6 text-center text-2xl font-bold text-zinc-900 dark:text-white">
+            병역 사항을 알려주세요
+          </h2>
+          <div className="grid grid-cols-2 gap-3">
+            {MILITARY_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => pick(setMilitary)(o.value)}
+                className={`${bigButton} ${military === o.value ? selected : unselected}`}
+              >
+                <span className="text-4xl">{o.emoji}</span>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Step 10 — style (추구미) */}
+      {step === 9 && (
+        <section>
+          <h2 className="mb-6 text-center text-2xl font-bold text-zinc-900 dark:text-white">
+            나의 추구미는?
+          </h2>
+          <div className="grid grid-cols-2 gap-3">
+            {STYLE_OPTIONS.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => pick(setStyle)(o.value)}
+                className={`${bigButton} ${style === o.value ? selected : unselected}`}
+              >
+                <span className="text-4xl">{o.emoji}</span>
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Step 11 — pick your anonymous nickname */}
+      {step === 10 && (
         <section className="text-center">
           <h2 className="mb-2 text-2xl font-bold text-zinc-900 dark:text-white">
             당신의 익명 이름이에요
@@ -358,6 +458,10 @@ export function OnboardingWizard({ error }: { error?: string }) {
             />
             <input type="hidden" name="face_type" value={face ?? ""} />
             <input type="hidden" name="mbti" value={mbtiString} />
+            <input type="hidden" name="smoking" value={smoking ?? ""} />
+            <input type="hidden" name="date_freq" value={dateFreq ?? ""} />
+            <input type="hidden" name="military" value={military ?? ""} />
+            <input type="hidden" name="style" value={style ?? ""} />
             {hobbies.map((h) => (
               <input key={h} type="hidden" name="hobbies" value={h} />
             ))}

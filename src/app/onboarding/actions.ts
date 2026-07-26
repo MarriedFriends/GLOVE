@@ -6,6 +6,10 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import {
   GENDER_OPTIONS,
+  SMOKING_OPTIONS,
+  DATE_FREQ_OPTIONS,
+  MILITARY_OPTIONS,
+  STYLE_OPTIONS,
   MIN_ADMISSION_YEAR,
   MAX_ADMISSION_YEAR,
   MIN_AGE,
@@ -36,6 +40,10 @@ export async function saveOnboarding(formData: FormData) {
   const faceType = String(formData.get("face_type") ?? "");
   const mbti = String(formData.get("mbti") ?? "");
   const hobbies = formData.getAll("hobbies").map(String);
+  const smoking = String(formData.get("smoking") ?? "");
+  const dateFreq = String(formData.get("date_freq") ?? "");
+  const military = String(formData.get("military") ?? "");
+  const style = String(formData.get("style") ?? "");
 
   // Validate every answer against the shared option lists.
   if (!GENDER_OPTIONS.some((o) => o.value === gender)) {
@@ -59,6 +67,18 @@ export async function saveOnboarding(formData: FormData) {
   }
   if (!/^[IE][NS][TF][PJ]$/.test(mbti)) {
     fail("MBTI 네 글자를 모두 선택해주세요.");
+  }
+  if (!SMOKING_OPTIONS.some((o) => o.value === smoking)) {
+    fail("흡연 여부를 선택해주세요.");
+  }
+  if (!DATE_FREQ_OPTIONS.some((o) => o.value === dateFreq)) {
+    fail("데이트 주기를 선택해주세요.");
+  }
+  if (!MILITARY_OPTIONS.some((o) => o.value === military)) {
+    fail("병역 사항을 선택해주세요.");
+  }
+  if (!STYLE_OPTIONS.some((o) => o.value === style)) {
+    fail("추구미를 선택해주세요.");
   }
   if (
     hobbies.length < 1 ||
@@ -98,6 +118,10 @@ export async function saveOnboarding(formData: FormData) {
         face_type: faceType as FaceType,
         mbti,
         hobbies,
+        smoking,
+        date_freq: dateFreq,
+        military,
+        style,
       })
       .eq("id", user.id);
 

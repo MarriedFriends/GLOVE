@@ -47,7 +47,9 @@ export default async function MatchesPage() {
     const otherId = m.user_low === user.id ? m.user_high : m.user_low;
     const other = (profiles ?? []).find((p) => p.id === otherId);
     const last = (lastMessages ?? []).find((msg) => msg.match_id === m.id);
-    return { match: m, other, last };
+    const expired =
+      Date.now() - +new Date(m.created_at) >= 48 * 3600 * 1000;
+    return { match: m, other, last, expired };
   });
 
   return (
@@ -73,8 +75,8 @@ export default async function MatchesPage() {
               아직 매칭된 상대가 없어요
             </p>
             <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-              오늘의 추천에서 좋아요를 보내보세요. 서로 좋아요를 누르면 여기서
-              채팅이 시작돼요!
+              서로 좋아요를 누르면 48시간 익명 채팅이 시작돼요. 채팅은 한
+              번에 한 명과만 할 수 있어요!
             </p>
             <Link
               href="/discover"
@@ -85,7 +87,7 @@ export default async function MatchesPage() {
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {rows.map(({ match, other, last }) => (
+            {rows.map(({ match, other, last, expired }) => (
               <Link
                 key={match.id}
                 href={`/chat/${match.id}`}
@@ -105,9 +107,11 @@ export default async function MatchesPage() {
                     )}
                   </p>
                   <p className="truncate text-sm text-zinc-500 dark:text-zinc-400">
-                    {last
-                      ? (last.content ?? "🎙️ 음성 메시지")
-                      : "첫 메시지를 보내보세요 👋"}
+                    {expired
+                      ? "⏰ 종료된 채팅 — 연락처 교환 가능"
+                      : last
+                        ? (last.content ?? "🎙️ 음성 메시지")
+                        : "첫 메시지를 보내보세요 👋"}
                   </p>
                 </div>
                 <span className="text-zinc-300 dark:text-zinc-600">›</span>
