@@ -16,6 +16,7 @@ import {
   MAX_HOBBIES,
 } from "@/lib/onboarding-options";
 import type { FaceType, Gender } from "@/lib/supabase/database.types";
+import { generateNickname } from "@/lib/nickname";
 
 function fail(message: string): never {
   redirect(`/onboarding?error=${encodeURIComponent(message)}`);
@@ -69,20 +70,39 @@ export async function saveOnboarding(formData: FormData) {
     fail(`취미를 1~${MAX_HOBBIES}개 골라주세요.`);
   }
 
-  const { error } = await supabase
-    .from("profiles")
-    .update({
-      gender: gender as Gender,
-      admission_year: admissionYear,
-      birth_year: new Date().getFullYear() - age,
-      height_range: heightRange,
-      face_type: faceType as FaceType,
-      mbti,
-      hobbies,
-    })
-    .eq("id", user.id);
+  // Give the user an anonymous nickname built from their answers
+  // (e.g. "흥이 많은 고양이"). Handles are unique, so on a collision we
+  // retry with a new random combination, then with a numeric suffix.
+  let saved = false;
+  for (let attempt = 0; attempt < 5 && !saved; attempt++) {
+    const nickname = generateNickname(faceType, hobbies, mbti);
+    const handle =
+      attempt < 3
+        ? nickname
+        : `${nickname} ${Math.floor(10 + Math.random() * 90)}`;
 
-  if (error) fail(error.message);
+    const { error } = await supabase
+      .from("profiles")
+      .update({
+        handle,
+        gender: gender as Gender,
+        admission_year: admissionYear,
+        birth_year: new Date().getFullYear() - age,
+        height_range: heightRange,
+        face_type: faceType as FaceType,
+        mbti,
+        hobbies,
+      })
+      .eq("id", user.id);
+
+    if (!error) {
+      saved = true;
+    } else if (error.code !== "23505") {
+      // 23505 = duplicate handle → retry; anything else is a real failure.
+      fail(error.message);
+    }
+  }
+  if (!saved) fail("닉네임을 만들지 못했어요. 다시 시도해주세요.");
 
   revalidatePath("/", "layout");
   redirect("/");
