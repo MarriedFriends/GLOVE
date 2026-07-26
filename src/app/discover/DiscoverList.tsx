@@ -94,8 +94,11 @@ export function DiscoverList({
         if (prefs.face_types.includes(c.face_type)) {
           matchedChips.push(`${face?.emoji ?? ""} ${face?.label ?? c.face_type}`);
         }
-        if (prefs.same_university && c.university) {
-          matchedChips.push("같은 학교");
+        if (prefs.university_scope === "same" && c.university) {
+          matchedChips.push("🏫 같은 학교");
+        }
+        if (prefs.university_scope === "different" && c.university) {
+          matchedChips.push("🚌 다른 학교");
         }
         if (prefs.hobby && c.hobbies.includes(prefs.hobby)) {
           matchedChips.push(`취미 ${prefs.hobby}`);

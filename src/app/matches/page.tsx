@@ -11,6 +11,8 @@ export default async function MatchesPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  await supabase.rpc("process_pending_matches");
+
   // RLS already limits this to matches I participate in.
   const { data: matches } = await supabase
     .from("matches")

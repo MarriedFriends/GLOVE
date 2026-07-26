@@ -6,8 +6,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
 /**
- * Accept an incoming like: like them back, which triggers the match, then
- * jump straight into the new chat room.
+ * Accept an incoming like: like them back. The match itself is created at
+ * the next 12:00 noon announcement, not instantly.
  */
 export async function acceptLike(formData: FormData) {
   const supabase = await createClient();
@@ -51,17 +51,8 @@ export async function acceptLike(formData: FormData) {
   );
   if (error) redirect(`/likes?error=${encodeURIComponent(error.message)}`);
 
-  // Mutual like → the trigger just created the match. Go straight to chat.
-  const [low, high] = [user.id, likerId].sort();
-  const { data: match } = await supabase
-    .from("matches")
-    .select("id")
-    .eq("user_low", low)
-    .eq("user_high", high)
-    .eq("status", "active")
-    .maybeSingle();
-
+  // The mutual like is recorded — the result is announced at 12:00 noon,
+  // when process_pending_matches() turns it into a match.
   revalidatePath("/", "layout");
-  if (match) redirect(`/chat/${match.id}`);
-  redirect("/matches");
+  redirect("/likes?accepted=1");
 }

@@ -116,6 +116,7 @@ export interface Database {
           min_admission_year: number;
           max_admission_year: number;
           same_university: boolean;
+          university_scope: "same" | "different" | "any";
           min_height_idx: number;
           max_height_idx: number;
           face_types: string[];
@@ -135,6 +136,7 @@ export interface Database {
           min_admission_year: number;
           max_admission_year: number;
           same_university?: boolean;
+          university_scope?: "same" | "different" | "any";
           min_height_idx: number;
           max_height_idx: number;
           face_types?: string[];
@@ -154,6 +156,7 @@ export interface Database {
           min_admission_year?: number;
           max_admission_year?: number;
           same_university?: boolean;
+          university_scope?: "same" | "different" | "any";
           min_height_idx?: number;
           max_height_idx?: number;
           face_types?: string[];
@@ -543,6 +546,10 @@ export interface Database {
     };
     Views: Record<never, never>;
     Functions: {
+      process_pending_matches: {
+        Args: Record<string, never>;
+        Returns: undefined;
+      };
       request_next_question: {
         Args: { p_match_id: string };
         Returns: undefined;

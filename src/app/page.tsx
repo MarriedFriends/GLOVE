@@ -21,6 +21,9 @@ export default async function Home() {
   let incomingLikes = 0;
   let activeChat: { id: string } | null = null;
   if (user) {
+    // Noon settlement: announce results for mutual likes (creates matches).
+    await supabase.rpc("process_pending_matches");
+
     const [profileRes, prefsRes, matchRes, likesRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase

@@ -45,26 +45,7 @@ export async function sendLike(formData: FormData) {
     redirect(`/discover?error=${encodeURIComponent(error.message)}`);
   }
 
-  // The match trigger ran inside the insert above — check if it fired.
-  const [low, high] = [user.id, likeeId].sort();
-  const { data: match } = await supabase
-    .from("matches")
-    .select("id")
-    .eq("user_low", low)
-    .eq("user_high", high)
-    .eq("status", "active")
-    .maybeSingle();
-
-  if (match) {
-    const { data: other } = await supabase
-      .from("profiles")
-      .select("handle")
-      .eq("id", likeeId)
-      .single();
-    revalidatePath("/discover");
-    redirect(`/discover?matched=${encodeURIComponent(other?.handle ?? "상대")}`);
-  }
-
+  // Results (including mutual likes) are announced at the next 12:00 noon.
   revalidatePath("/discover");
   redirect("/discover");
 }

@@ -47,7 +47,9 @@ export function FindWizard({ error }: { error?: string }) {
     MIN_ADMISSION_YEAR,
     MAX_ADMISSION_YEAR,
   ]);
-  const [sameUniversity, setSameUniversity] = useState(true);
+  const [universityScope, setUniversityScope] = useState<
+    "same" | "different" | "any"
+  >("any");
   const [heightRange, setHeightRange] = useState<[number, number]>([
     0,
     HEIGHT_BUCKETS.length - 1,
@@ -168,24 +170,32 @@ export function FindWizard({ error }: { error?: string }) {
 
           <div>
             <p className="mb-3 text-center text-sm text-zinc-500 dark:text-zinc-400">
-              같은 학교에서 찾을까요?
+              어느 학교에서 찾을까요?
             </p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <button
                 type="button"
-                onClick={() => setSameUniversity(true)}
-                className={`${bigButton} ${sameUniversity ? selected : unselected}`}
+                onClick={() => setUniversityScope("same")}
+                className={`${bigButton} !p-4 !text-sm ${universityScope === "same" ? selected : unselected}`}
               >
                 <span className="text-3xl">🏫</span>
                 같은 학교만
               </button>
               <button
                 type="button"
-                onClick={() => setSameUniversity(false)}
-                className={`${bigButton} ${!sameUniversity ? selected : unselected}`}
+                onClick={() => setUniversityScope("different")}
+                className={`${bigButton} !p-4 !text-sm ${universityScope === "different" ? selected : unselected}`}
+              >
+                <span className="text-3xl">🚌</span>
+                다른 학교만
+              </button>
+              <button
+                type="button"
+                onClick={() => setUniversityScope("any")}
+                className={`${bigButton} !p-4 !text-sm ${universityScope === "any" ? selected : unselected}`}
               >
                 <span className="text-3xl">🌍</span>
-                다른 학교도 좋아요
+                상관없음
               </button>
             </div>
           </div>
@@ -434,8 +444,8 @@ export function FindWizard({ error }: { error?: string }) {
             />
             <input
               type="hidden"
-              name="same_university"
-              value={sameUniversity ? "true" : "false"}
+              name="university_scope"
+              value={universityScope}
             />
             <input type="hidden" name="min_height_idx" value={heightRange[0]} />
             <input type="hidden" name="max_height_idx" value={heightRange[1]} />

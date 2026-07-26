@@ -76,7 +76,9 @@ create table if not exists public.match_preferences (
   max_age            int not null check (max_age between 19 and 30),
   min_admission_year int not null check (min_admission_year between 2000 and 2035),
   max_admission_year int not null check (max_admission_year between 2000 and 2035),
-  same_university    boolean not null default true,
+  same_university    boolean not null default true,   -- legacy; superseded by university_scope
+  university_scope   text not null default 'any'
+                       check (university_scope in ('same', 'different', 'any')),
   min_height_idx     int not null check (min_height_idx between 0 and 9),
   max_height_idx     int not null check (max_height_idx between 0 and 9),
   face_types         text[] not null default '{}',
@@ -94,10 +96,17 @@ create table if not exists public.match_preferences (
 );
 
 alter table public.match_preferences
+  add column if not exists university_scope text not null default 'any'
+    check (university_scope in ('same', 'different', 'any')),
   add column if not exists nonsmoker_only boolean not null default false,
   add column if not exists military_only boolean not null default false,
   add column if not exists pref_date_freqs text[] not null default '{}',
   add column if not exists pref_styles text[] not null default '{}';
+
+-- One-time migration of the legacy boolean into the richer scope.
+update public.match_preferences
+  set university_scope = 'same'
+  where same_university and university_scope = 'any';
 
 alter table public.match_preferences enable row level security;
 
@@ -366,50 +375,82 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- On a positive like: if the other person already liked back, create the match.
--- One chat at a time: no match is created while either person is inside a
--- live (48h) chat — the like stays recorded and can connect later.
--- Runs as security definer so it can write `matches` even though clients can't.
-create or replace function public.handle_like()
-returns trigger
+-- Matches are NOT created the moment likes become mutual anymore — results
+-- are announced at 12:00 noon (KST). The old instant-match trigger is gone.
+drop trigger if exists on_like_created on public.likes;
+drop function if exists public.handle_like();
+
+-- Noon settlement (lazy — clients call this on page load; the first visit
+-- after noon performs the announcement):
+--   1) Mutual-like pairs completed before the last noon become matches, in
+--      order of completion, honoring one-chat-at-a-time.
+--   2) Likes left unanswered for a full cycle (their noon has passed and a
+--      further 24h of grace) expire, so the sender can like someone again —
+--      including the same person later.
+create or replace function public.process_pending_matches()
+returns void
 language plpgsql
+volatile
 security definer
 set search_path = ''
 as $$
+declare
+  last_noon timestamptz;
+  pair record;
 begin
-  if new.is_like is not true then
-    return new;
+  -- Most recent 12:00 KST boundary.
+  last_noon := ((date_trunc('day', (now() at time zone 'Asia/Seoul'))
+                 + interval '12 hours') at time zone 'Asia/Seoul');
+  if last_noon > now() then
+    last_noon := last_noon - interval '24 hours';
   end if;
 
-  if exists (
-    select 1 from public.matches m
-    where m.status = 'active'
-      and m.created_at > now() - interval '48 hours'
-      and (new.liker_id in (m.user_low, m.user_high)
-        or new.likee_id in (m.user_low, m.user_high))
-  ) then
-    return new;
-  end if;
+  for pair in
+    select l1.liker_id as a, l1.likee_id as b,
+           greatest(l1.created_at, l2.created_at) as mutual_at
+    from public.likes l1
+    join public.likes l2
+      on l2.liker_id = l1.likee_id and l2.likee_id = l1.liker_id
+    where l1.is_like and l2.is_like
+      and l1.liker_id < l1.likee_id           -- visit each pair once
+      and greatest(l1.created_at, l2.created_at) <= last_noon
+      and not exists (
+        select 1 from public.matches m
+        where m.user_low = least(l1.liker_id, l1.likee_id)
+          and m.user_high = greatest(l1.liker_id, l1.likee_id)
+      )
+    order by mutual_at
+  loop
+    if not exists (
+      select 1 from public.matches m
+      where m.status = 'active'
+        and m.created_at > now() - interval '48 hours'
+        and (pair.a in (m.user_low, m.user_high)
+          or pair.b in (m.user_low, m.user_high))
+    ) then
+      insert into public.matches (user_low, user_high)
+      values (least(pair.a, pair.b), greatest(pair.a, pair.b))
+      on conflict do nothing;
+    end if;
+  end loop;
 
-  if exists (
-    select 1 from public.likes l
-    where l.liker_id = new.likee_id
-      and l.likee_id = new.liker_id
-      and l.is_like is true
-  ) then
-    insert into public.matches (user_low, user_high)
-    values (least(new.liker_id, new.likee_id), greatest(new.liker_id, new.likee_id))
-    on conflict (user_low, user_high) do nothing;
-  end if;
-
-  return new;
+  delete from public.likes l
+  where l.is_like
+    and l.created_at <= last_noon - interval '24 hours'
+    and not exists (
+      select 1 from public.likes r
+      where r.liker_id = l.likee_id and r.likee_id = l.liker_id and r.is_like
+    )
+    and not exists (
+      select 1 from public.matches m
+      where m.user_low = least(l.liker_id, l.likee_id)
+        and m.user_high = greatest(l.liker_id, l.likee_id)
+    );
 end;
 $$;
 
-drop trigger if exists on_like_created on public.likes;
-create trigger on_like_created
-  after insert on public.likes
-  for each row execute function public.handle_like();
+revoke execute on function public.process_pending_matches() from public, anon;
+grant execute on function public.process_pending_matches() to authenticated;
 
 -- ===========================================================================
 -- Matching: find_candidates() — the "AI 매칭" level-1 engine.
@@ -454,7 +495,7 @@ as $$
     select p.id, p.gender, p.university, p.birth_year, p.admission_year,
            p.height_range, p.face_type, p.mbti, p.hobbies,
            mp.min_age, mp.max_age, mp.min_admission_year, mp.max_admission_year,
-           mp.same_university, mp.min_height_idx, mp.max_height_idx,
+           mp.university_scope, mp.min_height_idx, mp.max_height_idx,
            mp.face_types as pref_faces,
            mp.nonsmoker_only, mp.military_only,
            mp.pref_date_freqs, mp.pref_styles
@@ -496,7 +537,10 @@ as $$
                     between cmp.min_admission_year and cmp.max_admission_year
               and (array_position(h.arr, me.height_range) - 1)
                     between cmp.min_height_idx and cmp.max_height_idx
-              and (not cmp.same_university or me.university = c.university)
+              and (cmp.university_scope = 'any'
+                   or (cmp.university_scope = 'same' and me.university = c.university)
+                   or (cmp.university_scope = 'different'
+                       and me.university is distinct from c.university))
              then 20 else 0 end
     )::int
   from me
@@ -518,7 +562,10 @@ as $$
           between me.min_admission_year and me.max_admission_year
     and (array_position(h.arr, c.height_range) - 1)
           between me.min_height_idx and me.max_height_idx
-    and (not me.same_university or c.university = me.university)
+    and (me.university_scope = 'any'
+         or (me.university_scope = 'same' and c.university = me.university)
+         or (me.university_scope = 'different'
+             and c.university is distinct from me.university))
     and (not me.nonsmoker_only or c.smoking = 'none')
     and (not me.military_only or c.military = 'served')
     and (coalesce(cardinality(me.pref_date_freqs), 0) = 0

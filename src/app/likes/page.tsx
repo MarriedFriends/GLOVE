@@ -8,9 +8,9 @@ import { acceptLike } from "./actions";
 export default async function LikesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; accepted?: string }>;
 }) {
-  const { error } = await searchParams;
+  const { error, accepted } = await searchParams;
 
   const supabase = await createClient();
   const {
@@ -18,7 +18,9 @@ export default async function LikesPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const [likesRes, matchesRes] = await Promise.all([
+  await supabase.rpc("process_pending_matches");
+
+  const [likesRes, matchesRes, myLikesRes] = await Promise.all([
     supabase
       .from("likes")
       .select("liker_id, created_at")
@@ -26,14 +28,22 @@ export default async function LikesPage({
       .eq("is_like", true)
       .order("created_at", { ascending: false }),
     supabase.from("matches").select("user_low, user_high"),
+    supabase
+      .from("likes")
+      .select("likee_id")
+      .eq("liker_id", user.id)
+      .eq("is_like", true),
   ]);
 
   // Hide likes that already became a match (any status).
   const matchedIds = new Set(
     (matchesRes.data ?? []).flatMap((m) => [m.user_low, m.user_high]),
   );
+  // Hide likes already matched AND ones I've already accepted (waiting for
+  // the noon announcement).
+  const myLikedIds = new Set((myLikesRes.data ?? []).map((l) => l.likee_id));
   const pending = (likesRes.data ?? []).filter(
-    (l) => !matchedIds.has(l.liker_id),
+    (l) => !matchedIds.has(l.liker_id) && !myLikedIds.has(l.liker_id),
   );
 
   const { data: profiles } = pending.length
@@ -70,6 +80,11 @@ export default async function LikesPage({
           <span className="w-10" />
         </div>
 
+        {accepted && (
+          <p className="mb-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700 dark:bg-green-950/40 dark:text-green-300">
+            수락 완료! ⏰ 낮 12시에 결과가 공개되고 매칭되면 채팅이 열려요.
+          </p>
+        )}
         {error && (
           <p className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">
             {error}
@@ -85,7 +100,7 @@ export default async function LikesPage({
             <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
               누군가 나에게 좋아요를 보내면 여기에 나타나요.
               <br />
-              수락하면 바로 채팅이 시작돼요!
+              수락하면 낮 12시에 결과가 공개돼요!
             </p>
           </div>
         ) : (
@@ -135,7 +150,7 @@ export default async function LikesPage({
                   <form action={acceptLike} className="mt-4">
                     <input type="hidden" name="liker_id" value={p.id} />
                     <button className="w-full rounded-full bg-gradient-to-r from-rose-500 to-pink-500 py-3 text-sm font-semibold text-white shadow-lg shadow-rose-500/30 transition-transform hover:scale-[1.02]">
-                      💗 수락하고 채팅 시작하기
+                      💗 수락하기 (낮 12시에 결과 공개)
                     </button>
                   </form>
                 </div>

@@ -31,7 +31,7 @@ export async function savePreferences(formData: FormData) {
   const maxAge = Number(formData.get("max_age"));
   const minAdmission = Number(formData.get("min_admission_year"));
   const maxAdmission = Number(formData.get("max_admission_year"));
-  const sameUniversity = formData.get("same_university") === "true";
+  const universityScope = String(formData.get("university_scope") ?? "any");
   const minHeightIdx = Number(formData.get("min_height_idx"));
   const maxHeightIdx = Number(formData.get("max_height_idx"));
   const faceTypes = formData.getAll("face_types").map(String);
@@ -72,6 +72,9 @@ export async function savePreferences(formData: FormData) {
   if (intro.length < 10 || intro.length > 80) {
     fail("자기소개는 10~80자로 적어주세요.");
   }
+  if (!["same", "different", "any"].includes(universityScope)) {
+    fail("학교 조건을 선택해주세요.");
+  }
   if (
     prefDateFreqs.length < 1 ||
     !prefDateFreqs.every((f) => DATE_FREQ_OPTIONS.some((o) => o.value === f))
@@ -89,7 +92,8 @@ export async function savePreferences(formData: FormData) {
     max_age: maxAge,
     min_admission_year: minAdmission,
     max_admission_year: maxAdmission,
-    same_university: sameUniversity,
+    same_university: universityScope === "same",
+    university_scope: universityScope as "same" | "different" | "any",
     min_height_idx: minHeightIdx,
     max_height_idx: maxHeightIdx,
     face_types: faceTypes,
