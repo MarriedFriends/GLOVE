@@ -483,10 +483,6 @@ export interface Database {
         Args: { p_match_id: string };
         Returns: undefined;
       };
-      pass_question: {
-        Args: { p_round_id: string };
-        Returns: undefined;
-      };
       get_daily_candidates: {
         Args: Record<string, never>;
         Returns: {

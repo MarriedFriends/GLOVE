@@ -769,8 +769,10 @@ create trigger on_answer_submitted
   after insert on public.question_answers
   for each row execute function public.handle_answer_submitted();
 
--- Pull the next unused question (used by the 3-min silence timer and the
--- "다음 질문 받기" button). Idempotent: does nothing while a round is active.
+-- The system drives the curriculum by itself: clients call this on chat
+-- silence, and the function decides. A question left unanswered for 10+
+-- minutes is expired (passed_by null = skipped by the system, not a user)
+-- so the conversation is never stuck on one card.
 create or replace function public.request_next_question(p_match_id uuid)
 returns void
 language plpgsql
@@ -788,6 +790,13 @@ begin
   ) then
     raise exception 'not a participant of this match';
   end if;
+
+  -- Expire a stale, uncompleted question after 10 minutes.
+  update public.question_rounds
+  set status = 'passed', revealed_at = now()
+  where match_id = p_match_id
+    and status = 'active'
+    and created_at < now() - interval '10 minutes';
 
   if exists (
     select 1 from public.question_rounds qr
@@ -815,48 +824,8 @@ $$;
 revoke execute on function public.request_next_question(uuid) from public, anon;
 grant execute on function public.request_next_question(uuid) to authenticated;
 
--- Skip a question. Each user gets 2 passes per match, enforced here.
-create or replace function public.pass_question(p_round_id uuid)
-returns void
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  uid uuid := (select auth.uid());
-  v_match uuid;
-  v_status text;
-  v_passes int;
-begin
-  select qr.match_id, qr.status into v_match, v_status
-  from public.question_rounds qr
-  join public.matches m on m.id = qr.match_id
-  where qr.id = p_round_id
-    and uid in (m.user_low, m.user_high);
-
-  if v_match is null then
-    raise exception 'round not found';
-  end if;
-  if v_status <> 'active' then
-    return;
-  end if;
-
-  select count(*) into v_passes
-  from public.question_rounds
-  where match_id = v_match and passed_by = uid;
-
-  if v_passes >= 2 then
-    raise exception 'no_passes_left';
-  end if;
-
-  update public.question_rounds
-  set status = 'passed', passed_by = uid, revealed_at = now()
-  where id = p_round_id and status = 'active';
-end;
-$$;
-
-revoke execute on function public.pass_question(uuid) from public, anon;
-grant execute on function public.pass_question(uuid) to authenticated;
+-- The user-pass system was removed — the system advances questions itself.
+drop function if exists public.pass_question(uuid);
 
 -- Stream round changes (new question, both-submitted reveal, pass) live.
 do $$

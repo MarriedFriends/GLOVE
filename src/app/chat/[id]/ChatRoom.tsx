@@ -19,7 +19,7 @@ const STAGE_NAMES: Record<number, string> = {
 };
 
 const SILENCE_MS = 3 * 60 * 1000; // 3 minutes of quiet → next question
-const MAX_PASSES = 2;
+const STALE_ROUND_MS = 10 * 60 * 1000; // unanswered 10 min → system skips it
 
 /**
  * Realtime chat inside a match, with the staged question curriculum.
@@ -79,8 +79,6 @@ export function ChatRoom({
   const remainingQuestions = questions.filter(
     (q) => !usedQuestionIds.has(q.id),
   ).length;
-  const passesLeft =
-    MAX_PASSES - rounds.filter((r) => r.passed_by === myId).length;
 
   function upsertRound(r: Round) {
     setRounds((prev) => {
@@ -163,16 +161,23 @@ export function ChatRoom({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 3 minutes of silence with no active question → the next one appears.
+  // The system advances the curriculum by itself: after 3 minutes of chat
+  // silence the next question appears; a question nobody completed within
+  // 10 minutes is skipped server-side. No user controls involved.
   useEffect(() => {
     const interval = setInterval(() => {
-      if (activeRound || remainingQuestions === 0) return;
+      const staleActive =
+        activeRound &&
+        Date.now() - +new Date(activeRound.created_at) >= STALE_ROUND_MS;
+      if (activeRound && !staleActive) return;
+      if (!activeRound && remainingQuestions === 0) return;
+
       const timestamps = [
         ...messages.map((m) => +new Date(m.created_at)),
         ...rounds.map((r) => +new Date(r.revealed_at ?? r.created_at)),
       ];
       const last = timestamps.length ? Math.max(...timestamps) : 0;
-      if (last && Date.now() - last >= SILENCE_MS) {
+      if (staleActive || (last && Date.now() - last >= SILENCE_MS)) {
         supabase.rpc("request_next_question", { p_match_id: matchId });
       }
     }, 10_000);
@@ -225,25 +230,6 @@ export function ChatRoom({
       ...prev,
       [round.id]: [...(prev[round.id] ?? []), data],
     }));
-  }
-
-  async function passRound(round: Round) {
-    setError(null);
-    const { error: rpcError } = await supabase.rpc("pass_question", {
-      p_round_id: round.id,
-    });
-    if (rpcError) {
-      setError(
-        rpcError.message.includes("no_passes_left")
-          ? "패스권을 모두 사용했어요. (매칭당 2개)"
-          : "패스하지 못했어요. 다시 시도해주세요.",
-      );
-    }
-  }
-
-  async function requestNext() {
-    setError(null);
-    await supabase.rpc("request_next_question", { p_match_id: matchId });
   }
 
   async function startRecording() {
@@ -352,7 +338,8 @@ export function ChatRoom({
             {currentStage}단계 · {STAGE_NAMES[currentStage]}
           </span>
           <span className="text-zinc-400 dark:text-zinc-500">
-            패스권 {Math.max(0, passesLeft)}개
+            질문 {rounds.filter((r) => r.status !== "active").length}/
+            {questions.length}
           </span>
         </div>
         <div className="flex gap-1.5">
@@ -397,28 +384,16 @@ export function ChatRoom({
                 draft={draft}
                 setDraft={setDraft}
                 submitting={answerSending}
-                passesLeft={passesLeft}
                 onSubmit={() => submitAnswer(item.r!)}
-                onPass={() => passRound(item.r!)}
               />
             ) : null,
           )}
         </div>
 
-        {/* Pull the next question early */}
         {!activeRound && remainingQuestions > 0 && timeline.length > 0 && (
-          <div className="mt-4 text-center">
-            <button
-              type="button"
-              onClick={requestNext}
-              className="rounded-full border border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-500 transition-colors hover:bg-rose-100 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
-            >
-              💌 다음 질문 받기
-            </button>
-            <p className="mt-1 text-[10px] text-zinc-400 dark:text-zinc-600">
-              대화가 3분 조용하면 자동으로 도착해요
-            </p>
-          </div>
+          <p className="mt-4 text-center text-[10px] text-zinc-400 dark:text-zinc-600">
+            대화가 잠시 조용해지면 다음 질문이 자동으로 도착해요 💌
+          </p>
         )}
         <div ref={bottomRef} />
       </div>
@@ -533,9 +508,7 @@ function QuestionCard({
   draft,
   setDraft,
   submitting,
-  passesLeft,
   onSubmit,
-  onPass,
 }: {
   round: Round;
   question: Question | undefined;
@@ -545,9 +518,7 @@ function QuestionCard({
   draft: string;
   setDraft: (v: string) => void;
   submitting: boolean;
-  passesLeft: number;
   onSubmit: () => void;
-  onPass: () => void;
 }) {
   const myAnswer = answers.find((a) => a.user_id === myId);
   const theirAnswer = answers.find((a) => a.user_id !== myId);
@@ -566,8 +537,9 @@ function QuestionCard({
 
       {round.status === "passed" ? (
         <p className="mt-3 rounded-xl bg-black/[.04] px-3 py-2 text-xs text-zinc-500 dark:bg-white/[.06] dark:text-zinc-400">
-          🙅 {round.passed_by === myId ? "내가" : "상대가"} 이 질문을
-          패스했어요
+          {round.passed_by
+            ? `🙅 ${round.passed_by === myId ? "내가" : "상대가"} 이 질문을 패스했어요`
+            : "⏰ 답변 없이 지나간 질문이에요"}
         </p>
       ) : round.status === "revealed" ? (
         <div className="mt-3 flex flex-col gap-2">
@@ -614,24 +586,14 @@ function QuestionCard({
             placeholder="내 답변 (상대가 제출하기 전엔 안 보여요)"
             className="w-full resize-none rounded-xl border border-black/[.08] bg-white p-3 text-sm outline-none focus:border-rose-400 dark:border-white/[.12] dark:bg-zinc-900"
           />
-          <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              onClick={onPass}
-              disabled={passesLeft <= 0}
-              className="rounded-full border border-black/[.1] px-4 py-2 text-xs font-medium text-zinc-500 disabled:opacity-40 dark:border-white/[.15] dark:text-zinc-400"
-            >
-              패스 ({Math.max(0, passesLeft)}개 남음)
-            </button>
-            <button
-              type="button"
-              onClick={onSubmit}
-              disabled={!draft.trim() || submitting}
-              className="flex-1 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 py-2 text-xs font-semibold text-white shadow shadow-rose-500/30 disabled:opacity-40"
-            >
-              제출하기
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={!draft.trim() || submitting}
+            className="mt-2 w-full rounded-full bg-gradient-to-r from-rose-500 to-pink-500 py-2 text-xs font-semibold text-white shadow shadow-rose-500/30 disabled:opacity-40"
+          >
+            제출하기
+          </button>
         </div>
       )}
     </div>
