@@ -11,7 +11,6 @@ type Message = Database["public"]["Tables"]["messages"]["Row"];
 type Contact = Database["public"]["Tables"]["contact_reveals"]["Row"];
 type Question = Database["public"]["Tables"]["questions"]["Row"];
 type Round = Database["public"]["Tables"]["question_rounds"]["Row"];
-type Answer = Database["public"]["Tables"]["question_answers"]["Row"];
 type Supabase = ReturnType<typeof createClient>;
 
 const STAGE_NAMES: Record<number, string> = {
@@ -25,9 +24,10 @@ const CHAT_LIFETIME_MS = 48 * 3600 * 1000; // chats last 48 hours
 const STALE_ROUND_MS = 10 * 60 * 1000; // unanswered 10 min → system skips it
 
 /**
- * Realtime chat inside a match, with the staged question curriculum.
- * Answers stay hidden (RLS) until both sides submit; the reveal arrives as a
- * question_rounds UPDATE over Realtime, so both screens flip simultaneously.
+ * Realtime anonymous chat. The current question is pinned above the thread;
+ * each person's FIRST message while it's active is tagged as their answer by
+ * a DB trigger. When both have answered, the 다음 vote (or the silence timer)
+ * brings the next question.
  */
 export function ChatRoom({
   matchId,
@@ -39,7 +39,6 @@ export function ChatRoom({
   initialMessages,
   questions,
   initialRounds,
-  initialAnswers,
 }: {
   matchId: string;
   myId: string;
@@ -50,36 +49,27 @@ export function ChatRoom({
   initialMessages: Message[];
   questions: Question[];
   initialRounds: Round[];
-  initialAnswers: Answer[];
 }) {
   const [supabase] = useState(() => createClient());
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [rounds, setRounds] = useState<Round[]>(initialRounds);
-  const [answers, setAnswers] = useState<Record<string, Answer[]>>(() => {
-    const byRound: Record<string, Answer[]> = {};
-    for (const a of initialAnswers) (byRound[a.round_id] ??= []).push(a);
-    return byRound;
-  });
   const [text, setText] = useState("");
-  const [draft, setDraft] = useState("");
   const [panelOpen, setPanelOpen] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>(initialContacts);
   const [contactDraft, setContactDraft] = useState("");
   const [contactSending, setContactSending] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   const expiresAtMs = +new Date(matchCreatedAt) + CHAT_LIFETIME_MS;
   const expired = now >= expiresAtMs;
 
-  // Tick every 30s so the countdown and the expiry flip stay current.
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
   }, []);
-  const [sending, setSending] = useState(false);
-  const [answerSending, setAnswerSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
 
   // Voice recording state
   const [recState, setRecState] = useState<"idle" | "recording" | "processing">(
@@ -94,6 +84,10 @@ export function ChatRoom({
     () => new Map(questions.map((q) => [q.id, q])),
     [questions],
   );
+  const roundById = useMemo(
+    () => new Map(rounds.map((r) => [r.id, r])),
+    [rounds],
+  );
   const activeRound = rounds.find((r) => r.status === "active");
   const usedQuestionIds = useMemo(
     () => new Set(rounds.map((r) => r.question_id)),
@@ -102,6 +96,13 @@ export function ChatRoom({
   const remainingQuestions = questions.filter(
     (q) => !usedQuestionIds.has(q.id),
   ).length;
+  const latestCompleted = rounds
+    .filter((r) => r.status !== "active")
+    .reduce<Round | null>(
+      (best, r) => (!best || r.round_no > best.round_no ? r : best),
+      null,
+    );
+  const iAmLow = myId === userLow;
 
   function upsertRound(r: Round) {
     setRounds((prev) => {
@@ -139,15 +140,7 @@ export function ChatRoom({
     fetchContacts();
   }
 
-  async function fetchAnswers(roundId: string) {
-    const { data } = await supabase
-      .from("question_answers")
-      .select("*")
-      .eq("round_id", roundId);
-    if (data) setAnswers((prev) => ({ ...prev, [roundId]: data }));
-  }
-
-  // Live updates: messages + question rounds.
+  // Live updates: messages + question rounds + contact reveals.
   useEffect(() => {
     const channel = supabase
       .channel(`match-${matchId}`)
@@ -184,11 +177,7 @@ export function ChatRoom({
           table: "question_rounds",
           filter: `match_id=eq.${matchId}`,
         },
-        (payload) => {
-          const r = payload.new as Round;
-          upsertRound(r);
-          if (r.status === "revealed") fetchAnswers(r.id); // 동시 공개
-        },
+        (payload) => upsertRound(payload.new as Round),
       )
       .on(
         "postgres_changes",
@@ -210,9 +199,9 @@ export function ChatRoom({
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, rounds]);
+  }, [messages]);
 
-  // Old matches created before the curriculum: pull the first question once.
+  // Matches created before the curriculum existed: pull the first question.
   useEffect(() => {
     if (initialRounds.length === 0 && !expired) {
       supabase.rpc("request_next_question", { p_match_id: matchId });
@@ -220,9 +209,8 @@ export function ChatRoom({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The system advances the curriculum by itself: after 3 minutes of chat
-  // silence the next question appears; a question nobody completed within
-  // 10 minutes is skipped server-side. No user controls involved.
+  // System pacing: 3 minutes of silence brings the next question; a question
+  // nobody finished within 10 minutes gets skipped server-side.
   useEffect(() => {
     const interval = setInterval(() => {
       if (expired) return;
@@ -268,28 +256,14 @@ export function ChatRoom({
     }
     setText("");
     appendMessage(data);
-  }
-
-  async function submitAnswer(round: Round) {
-    const answer = draft.trim();
-    if (!answer || answerSending) return;
-    setAnswerSending(true);
-    setError(null);
-    const { data, error: insertError } = await supabase
-      .from("question_answers")
-      .insert({ round_id: round.id, user_id: myId, answer })
-      .select()
-      .single();
-    setAnswerSending(false);
-    if (insertError) {
-      setError("답변을 제출하지 못했어요. 다시 시도해주세요.");
-      return;
-    }
-    setDraft("");
-    setAnswers((prev) => ({
-      ...prev,
-      [round.id]: [...(prev[round.id] ?? []), data],
-    }));
+    // The trigger may have tagged this message as an answer / completed the
+    // round — refresh the round list so the banner reflects it immediately.
+    const { data: freshRounds } = await supabase
+      .from("question_rounds")
+      .select("*")
+      .eq("match_id", matchId)
+      .order("round_no");
+    if (freshRounds) setRounds(freshRounds);
   }
 
   async function readyForNext() {
@@ -334,6 +308,12 @@ export function ChatRoom({
           .single();
         if (insertError) throw insertError;
         appendMessage(data);
+        const { data: freshRounds } = await supabase
+          .from("question_rounds")
+          .select("*")
+          .eq("match_id", matchId)
+          .order("round_no");
+        if (freshRounds) setRounds(freshRounds);
       } catch {
         setError("음성 메시지를 보내지 못했어요. 다시 시도해주세요.");
       }
@@ -360,26 +340,7 @@ export function ChatRoom({
     if (recorder && recorder.state === "recording") recorder.stop();
   }
 
-  // Merge messages and question cards into one timeline by time.
-  const timeline = useMemo(() => {
-    const items: { at: number; el: "message" | "round"; key: string; m?: Message; r?: Round }[] = [
-      ...messages.map((m) => ({
-        at: +new Date(m.created_at),
-        el: "message" as const,
-        key: `m-${m.id}`,
-        m,
-      })),
-      ...rounds.map((r) => ({
-        at: +new Date(r.created_at),
-        el: "round" as const,
-        key: `r-${r.id}`,
-        r,
-      })),
-    ];
-    return items.sort((a, b) => a.at - b.at);
-  }, [messages, rounds]);
-
-  // Progress gauge: per-stage completion.
+  // Progress gauge data.
   const stageProgress = [1, 2, 3].map((stage) => {
     const total = questions.filter((q) => q.stage === stage).length;
     const done = rounds.filter(
@@ -394,23 +355,39 @@ export function ChatRoom({
     stageProgress.find((s) => s.done < s.total)?.stage ??
     3;
 
-  // The newest completed round is where the "다음" vote lives.
-  const latestCompleted = rounds
-    .filter((r) => r.status !== "active")
-    .reduce<Round | null>(
-      (best, r) => (!best || r.round_no > best.round_no ? r : best),
-      null,
-    );
+  // The partner's answers (= their messages tagged by the trigger).
+  const theirAnswers = messages
+    .filter((m) => m.answer_round_id && m.sender_id !== myId)
+    .map((m) => {
+      const r = roundById.get(m.answer_round_id!);
+      return {
+        message: m,
+        round: r,
+        question: r ? questionById.get(r.question_id) : undefined,
+      };
+    });
 
-  // Revealed answers by the other person, for the profile side panel.
-  const theirRevealedAnswers = rounds
-    .filter((r) => r.status === "revealed")
-    .map((r) => ({
-      round: r,
-      question: questionById.get(r.question_id),
-      answer: (answers[r.id] ?? []).find((a) => a.user_id !== myId),
-    }))
-    .filter((x) => x.answer);
+  // Banner state for the active question.
+  const myAnswered = activeRound
+    ? iAmLow
+      ? activeRound.low_submitted
+      : activeRound.high_submitted
+    : false;
+  const otherAnswered = activeRound
+    ? iAmLow
+      ? activeRound.high_submitted
+      : activeRound.low_submitted
+    : false;
+  const myNextPressed = latestCompleted
+    ? iAmLow
+      ? latestCompleted.low_next
+      : latestCompleted.high_next
+    : false;
+  const otherNextPressed = latestCompleted
+    ? iAmLow
+      ? latestCompleted.high_next
+      : latestCompleted.low_next
+    : false;
 
   return (
     <>
@@ -470,55 +447,112 @@ export function ChatRoom({
         </div>
       </div>
 
-      {/* Timeline: messages + question cards */}
-      <div className="flex-1 overflow-y-auto px-5 py-4">
-        {timeline.length === 0 && (
-          <p className="mt-10 text-center text-sm text-zinc-400 dark:text-zinc-500">
-            매칭을 축하해요! 🎉 곧 첫 질문이 도착해요.
+      {/* Pinned question banner */}
+      {!expired && activeRound && (
+        <div className="border-b border-rose-200/60 bg-rose-50/80 px-5 py-3 dark:border-rose-900/60 dark:bg-rose-950/30">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-rose-400">
+            질문 {activeRound.round_no}
           </p>
-        )}
-        <div className="flex flex-col gap-3">
-          {timeline.map((item) =>
-            item.el === "message" && item.m ? (
-              <MessageBubble
-                key={item.key}
-                m={item.m}
-                mine={item.m.sender_id === myId}
-                supabase={supabase}
-              />
-            ) : item.r ? (
-              <QuestionCard
-                key={item.key}
-                round={item.r}
-                question={questionById.get(item.r.question_id)}
-                answers={answers[item.r.id] ?? []}
-                myId={myId}
-                userLow={userLow}
-                draft={draft}
-                setDraft={setDraft}
-                submitting={answerSending}
-                onSubmit={() => submitAnswer(item.r!)}
-                showNextVote={
-                  !activeRound &&
-                  remainingQuestions > 0 &&
-                  item.r.id === latestCompleted?.id
-                }
-                onReadyNext={readyForNext}
-              />
-            ) : null,
+          <p className="mt-0.5 text-sm font-bold leading-6 text-zinc-900 dark:text-white">
+            Q. {questionById.get(activeRound.question_id)?.prompt}
+          </p>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            {!myAnswered && !otherAnswered && (
+              <>✍️ 지금 보내는 첫 메시지가 이 질문의 답이 돼요</>
+            )}
+            {!myAnswered && otherAnswered && (
+              <>👀 상대는 답했어요 — 내 첫 메시지가 답이 돼요</>
+            )}
+            {myAnswered && !otherAnswered && (
+              <>✓ 나는 답했어요 · ⏳ 상대의 답을 기다리는 중</>
+            )}
+          </p>
+        </div>
+      )}
+      {!expired && !activeRound && latestCompleted && remainingQuestions > 0 && (
+        <div className="border-b border-rose-200/60 bg-rose-50/60 px-5 py-2.5 text-center dark:border-rose-900/60 dark:bg-rose-950/20">
+          {myNextPressed ? (
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              ⏳ 상대도 &lsquo;다음&rsquo;을 누르면 새 질문이 나와요 (1/2) —
+              조용해지면 자동으로도 와요
+            </p>
+          ) : (
+            <div className="flex items-center justify-center gap-2">
+              {otherNextPressed && (
+                <span className="text-xs font-medium text-rose-500">
+                  👀 상대가 기다려요!
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={readyForNext}
+                className="rounded-full border border-rose-300 bg-white px-4 py-1.5 text-xs font-semibold text-rose-500 transition-colors hover:bg-rose-50 dark:border-rose-800 dark:bg-zinc-900 dark:hover:bg-rose-950/40"
+              >
+                다음 질문 →
+              </button>
+            </div>
           )}
         </div>
+      )}
 
-        {!activeRound && remainingQuestions > 0 && timeline.length > 0 && (
-          <p className="mt-4 text-center text-[10px] text-zinc-400 dark:text-zinc-600">
-            둘 다 &lsquo;다음 질문&rsquo;을 누르거나 잠시 조용해지면 다음 질문이
-            도착해요 💌
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {messages.length === 0 && (
+          <p className="mt-10 text-center text-sm text-zinc-400 dark:text-zinc-500">
+            매칭을 축하해요! 🎉
+            <br />위 질문에 첫 메시지로 답하며 대화를 시작해보세요.
           </p>
         )}
+        <div className="flex flex-col gap-2">
+          {messages.map((m) => {
+            const mine = m.sender_id === myId;
+            const answerRound = m.answer_round_id
+              ? roundById.get(m.answer_round_id)
+              : undefined;
+            return (
+              <div
+                key={m.id}
+                className={`flex items-end gap-1.5 ${mine ? "flex-row-reverse" : ""}`}
+              >
+                <div className={`max-w-[75%] ${mine ? "text-right" : ""}`}>
+                  {answerRound && (
+                    <p
+                      className={`mb-0.5 text-[10px] font-semibold text-rose-400 ${mine ? "mr-1" : "ml-1"}`}
+                    >
+                      💌 질문 {answerRound.round_no} 답변
+                    </p>
+                  )}
+                  <div
+                    className={`inline-block rounded-2xl px-4 py-2.5 text-left text-sm leading-6 ${
+                      mine
+                        ? "rounded-br-md bg-gradient-to-r from-rose-500 to-pink-500 text-white"
+                        : "rounded-bl-md border border-black/[.06] bg-white text-zinc-800 dark:border-white/[.1] dark:bg-zinc-900 dark:text-zinc-200"
+                    } ${answerRound ? "ring-2 ring-rose-200 dark:ring-rose-900" : ""}`}
+                  >
+                    {m.audio_path ? (
+                      <VoiceBubble supabase={supabase} path={m.audio_path} />
+                    ) : (
+                      m.content
+                    )}
+                  </div>
+                </div>
+                <span
+                  suppressHydrationWarning
+                  className="text-[10px] text-zinc-400 dark:text-zinc-600"
+                >
+                  {new Date(m.created_at).toLocaleTimeString("ko-KR", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </div>
+            );
+          })}
+        </div>
         <div ref={bottomRef} />
       </div>
 
-      {/* Composer */}
+      {/* Composer / contact exchange */}
       <div className="border-t border-black/[.06] bg-white/70 p-3 backdrop-blur dark:border-white/[.08] dark:bg-black/40">
         {error && (
           <p className="mb-2 text-center text-xs text-red-500">{error}</p>
@@ -621,7 +655,11 @@ export function ChatRoom({
               value={text}
               onChange={(e) => setText(e.target.value)}
               maxLength={2000}
-              placeholder="메시지 보내기..."
+              placeholder={
+                activeRound && !myAnswered
+                  ? "질문에 대한 내 답을 보내보세요..."
+                  : "메시지 보내기..."
+              }
               className="flex-1 rounded-full border border-black/[.1] bg-white px-4 py-2.5 text-sm outline-none focus:border-rose-400 dark:border-white/[.15] dark:bg-zinc-900"
             />
             <button
@@ -667,27 +705,29 @@ export function ChatRoom({
             </p>
           </div>
           <div className="flex-1 overflow-y-auto p-4">
-            {theirRevealedAnswers.length === 0 ? (
+            {theirAnswers.length === 0 ? (
               <p className="mt-8 text-center text-sm text-zinc-400 dark:text-zinc-500">
-                아직 공개된 답변이 없어요.
+                아직 답변이 없어요.
                 <br />
                 질문에 서로 답하면 여기에 쌓여요!
               </p>
             ) : (
               <div className="flex flex-col gap-3">
-                {theirRevealedAnswers.map(({ round, question, answer }) => (
+                {theirAnswers.map(({ message, round, question }) => (
                   <div
-                    key={round.id}
+                    key={message.id}
                     className="rounded-2xl border border-black/[.06] bg-rose-50/50 p-3.5 dark:border-white/[.08] dark:bg-rose-950/20"
                   >
                     <p className="text-[10px] font-semibold text-rose-400">
-                      {question?.stage ?? 1}단계 · 질문 {round.round_no}
+                      {question?.stage ?? 1}단계 · 질문 {round?.round_no ?? "?"}
                     </p>
                     <p className="mt-0.5 text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                       Q. {question?.prompt}
                     </p>
                     <p className="mt-1.5 text-sm leading-6 text-zinc-800 dark:text-zinc-200">
-                      {answer?.answer}
+                      {message.audio_path
+                        ? "🎙️ 음성으로 답했어요"
+                        : message.content}
                     </p>
                   </div>
                 ))}
@@ -697,180 +737,6 @@ export function ChatRoom({
         </div>
       </div>
     </>
-  );
-}
-
-function MessageBubble({
-  m,
-  mine,
-  supabase,
-}: {
-  m: Message;
-  mine: boolean;
-  supabase: Supabase;
-}) {
-  return (
-    <div className={`flex items-end gap-1.5 ${mine ? "flex-row-reverse" : ""}`}>
-      <div
-        className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-6 ${
-          mine
-            ? "rounded-br-md bg-gradient-to-r from-rose-500 to-pink-500 text-white"
-            : "rounded-bl-md border border-black/[.06] bg-white text-zinc-800 dark:border-white/[.1] dark:bg-zinc-900 dark:text-zinc-200"
-        }`}
-      >
-        {m.audio_path ? (
-          <VoiceBubble supabase={supabase} path={m.audio_path} />
-        ) : (
-          m.content
-        )}
-      </div>
-      <span
-        suppressHydrationWarning
-        className="text-[10px] text-zinc-400 dark:text-zinc-600"
-      >
-        {new Date(m.created_at).toLocaleTimeString("ko-KR", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
-      </span>
-    </div>
-  );
-}
-
-/** The system question card, in all of its states. */
-function QuestionCard({
-  round,
-  question,
-  answers,
-  myId,
-  userLow,
-  draft,
-  setDraft,
-  submitting,
-  onSubmit,
-  showNextVote,
-  onReadyNext,
-}: {
-  round: Round;
-  question: Question | undefined;
-  answers: Answer[];
-  myId: string;
-  userLow: string;
-  draft: string;
-  setDraft: (v: string) => void;
-  submitting: boolean;
-  onSubmit: () => void;
-  showNextVote: boolean;
-  onReadyNext: () => void;
-}) {
-  const myAnswer = answers.find((a) => a.user_id === myId);
-  const theirAnswer = answers.find((a) => a.user_id !== myId);
-  const iAmLow = myId === userLow;
-  const otherSubmitted = iAmLow ? round.high_submitted : round.low_submitted;
-  const myNextPressed = iAmLow ? round.low_next : round.high_next;
-  const otherNextPressed = iAmLow ? round.high_next : round.low_next;
-  const stage = question?.stage ?? 1;
-
-  const nextVote = showNextVote && (
-    <div className="mt-3">
-      {myNextPressed ? (
-        <p className="text-center text-xs text-zinc-500 dark:text-zinc-400">
-          ⏳ 상대도 &lsquo;다음&rsquo;을 누르면 새 질문이 도착해요 (1/2)
-        </p>
-      ) : (
-        <>
-          {otherNextPressed && (
-            <p className="mb-1.5 text-center text-xs font-medium text-rose-500">
-              👀 상대가 다음 질문을 기다리고 있어요!
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={onReadyNext}
-            className="w-full rounded-full border border-rose-200 bg-white py-2 text-xs font-semibold text-rose-500 transition-colors hover:bg-rose-50 dark:border-rose-900 dark:bg-zinc-900 dark:hover:bg-rose-950/40"
-          >
-            다음 질문 →
-          </button>
-        </>
-      )}
-    </div>
-  );
-
-  return (
-    <div className="mx-auto w-full max-w-sm rounded-2xl border-2 border-rose-200 bg-rose-50/80 p-4 dark:border-rose-900 dark:bg-rose-950/30">
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-rose-400">
-        {stage}단계 질문 {round.round_no}
-      </p>
-      <p className="mt-1 text-sm font-bold leading-6 text-zinc-900 dark:text-white">
-        Q. {question?.prompt ?? "질문"}
-      </p>
-
-      {round.status === "passed" ? (
-        <>
-          <p className="mt-3 rounded-xl bg-black/[.04] px-3 py-2 text-xs text-zinc-500 dark:bg-white/[.06] dark:text-zinc-400">
-            {round.passed_by
-              ? `🙅 ${round.passed_by === myId ? "내가" : "상대가"} 이 질문을 패스했어요`
-              : "⏰ 답변 없이 지나간 질문이에요"}
-          </p>
-          {nextVote}
-        </>
-      ) : round.status === "revealed" ? (
-        <div className="mt-3 flex flex-col gap-2">
-          <p className="text-center text-[11px] font-semibold text-rose-500">
-            ✨ 두 답변이 동시에 공개됐어요!
-          </p>
-          <div className="rounded-xl bg-white px-3 py-2.5 text-sm dark:bg-zinc-900">
-            <p className="mb-0.5 text-[10px] font-semibold text-zinc-400">
-              상대의 답
-            </p>
-            {theirAnswer?.answer ?? "..."}
-          </div>
-          <div className="rounded-xl bg-white px-3 py-2.5 text-sm dark:bg-zinc-900">
-            <p className="mb-0.5 text-[10px] font-semibold text-rose-400">
-              나의 답
-            </p>
-            {myAnswer?.answer ?? "..."}
-          </div>
-          {nextVote}
-        </div>
-      ) : myAnswer ? (
-        <div className="mt-3">
-          <div className="rounded-xl bg-white px-3 py-2.5 text-sm dark:bg-zinc-900">
-            <p className="mb-0.5 text-[10px] font-semibold text-rose-400">
-              나의 답 (제출됨)
-            </p>
-            {myAnswer.answer}
-          </div>
-          <p className="mt-2 text-center text-xs text-zinc-500 dark:text-zinc-400">
-            ⏳ 상대가 아직 작성 중이에요 — 둘 다 제출하면 동시에 공개돼요
-          </p>
-        </div>
-      ) : (
-        <div className="mt-3">
-          {otherSubmitted && (
-            <p className="mb-2 text-center text-xs font-medium text-rose-500">
-              👀 상대는 이미 답을 보냈어요!
-            </p>
-          )}
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            maxLength={500}
-            rows={2}
-            placeholder="내 답변 (상대가 제출하기 전엔 안 보여요)"
-            className="w-full resize-none rounded-xl border border-black/[.08] bg-white p-3 text-sm outline-none focus:border-rose-400 dark:border-white/[.12] dark:bg-zinc-900"
-          />
-          <button
-            type="button"
-            onClick={onSubmit}
-            disabled={!draft.trim() || submitting}
-            className="mt-2 w-full rounded-full bg-gradient-to-r from-rose-500 to-pink-500 py-2 text-xs font-semibold text-white shadow shadow-rose-500/30 disabled:opacity-40"
-          >
-            제출하기
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 

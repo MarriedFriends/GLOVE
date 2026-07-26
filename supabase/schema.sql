@@ -154,6 +154,7 @@ create table if not exists public.messages (
   sender_id  uuid not null references public.profiles (id) on delete cascade,
   content    text,                       -- null for voice messages
   audio_path text,                       -- storage path of a modulated voice note
+  answer_round_id uuid,                  -- set when this message answers a question
   created_at timestamptz not null default now(),
   constraint messages_content_or_audio check (
     (content is not null and char_length(content) between 1 and 2000)
@@ -164,6 +165,7 @@ create table if not exists public.messages (
 -- Voice-message columns added after the first release — bring existing
 -- databases up to date.
 alter table public.messages add column if not exists audio_path text;
+alter table public.messages add column if not exists answer_round_id uuid;
 alter table public.messages alter column content drop not null;
 alter table public.messages drop constraint if exists messages_content_check;
 alter table public.messages drop constraint if exists messages_content_or_audio;
@@ -869,43 +871,54 @@ create trigger on_match_created
   after insert on public.matches
   for each row execute function public.start_first_question();
 
--- Mark submission flags; reveal when both sides are in.
-create or replace function public.handle_answer_submitted()
+-- Answers are ordinary chat messages now: while a question is active, each
+-- person's FIRST message is tagged as their answer. When both have answered
+-- the round completes ('revealed') and the 다음 vote / silence timer can
+-- bring the next question.
+drop trigger if exists on_answer_submitted on public.question_answers;
+drop function if exists public.handle_answer_submitted();
+
+create or replace function public.handle_message_answer()
 returns trigger
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
-  v_low uuid;
-  v_high uuid;
+  r record;
 begin
-  select m.user_low, m.user_high into v_low, v_high
+  select qr.id, qr.low_submitted, qr.high_submitted, m.user_low, m.user_high
+    into r
   from public.question_rounds qr
   join public.matches m on m.id = qr.match_id
-  where qr.id = new.round_id;
+  where qr.match_id = new.match_id and qr.status = 'active'
+  order by qr.round_no desc
+  limit 1;
 
-  if new.user_id = v_low then
-    update public.question_rounds set low_submitted = true where id = new.round_id;
-  elsif new.user_id = v_high then
-    update public.question_rounds set high_submitted = true where id = new.round_id;
+  if r.id is null then
+    return new;
+  end if;
+
+  if new.sender_id = r.user_low and not r.low_submitted then
+    new.answer_round_id := r.id;
+    update public.question_rounds set low_submitted = true where id = r.id;
+  elsif new.sender_id = r.user_high and not r.high_submitted then
+    new.answer_round_id := r.id;
+    update public.question_rounds set high_submitted = true where id = r.id;
   end if;
 
   update public.question_rounds
   set status = 'revealed', revealed_at = now()
-  where id = new.round_id
-    and status = 'active'
-    and low_submitted
-    and high_submitted;
+  where id = r.id and status = 'active' and low_submitted and high_submitted;
 
   return new;
 end;
 $$;
 
-drop trigger if exists on_answer_submitted on public.question_answers;
-create trigger on_answer_submitted
-  after insert on public.question_answers
-  for each row execute function public.handle_answer_submitted();
+drop trigger if exists on_message_answer on public.messages;
+create trigger on_message_answer
+  before insert on public.messages
+  for each row execute function public.handle_message_answer();
 
 -- The system drives the curriculum by itself: clients call this on chat
 -- silence, and the function decides. A question left unanswered for 10+

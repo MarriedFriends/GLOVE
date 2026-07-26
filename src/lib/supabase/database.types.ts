@@ -292,6 +292,7 @@ export interface Database {
           sender_id: string;
           content: string | null;
           audio_path: string | null;
+          answer_round_id: string | null;
           created_at: string;
         };
         Insert: {
@@ -300,6 +301,7 @@ export interface Database {
           sender_id: string;
           content?: string | null;
           audio_path?: string | null;
+          answer_round_id?: string | null;
           created_at?: string;
         };
         Update: {
@@ -308,6 +310,7 @@ export interface Database {
           sender_id?: string;
           content?: string | null;
           audio_path?: string | null;
+          answer_round_id?: string | null;
           created_at?: string;
         };
         Relationships: [

@@ -53,17 +53,6 @@ export default async function ChatPage({
   const rounds = roundsRes.data ?? [];
   const contacts = contactsRes.data ?? [];
 
-  // Answers visible to me right now (mine + those in revealed rounds).
-  const { data: answers } = rounds.length
-    ? await supabase
-        .from("question_answers")
-        .select("*")
-        .in(
-          "round_id",
-          rounds.map((r) => r.id),
-        )
-    : { data: [] };
-
   const emoji =
     FACE_OPTIONS.find((o) => o.value === other?.face_type)?.emoji ?? "🙂";
 
@@ -79,7 +68,6 @@ export default async function ChatPage({
         initialMessages={messages ?? []}
         questions={questions}
         initialRounds={rounds}
-        initialAnswers={answers ?? []}
       />
     </div>
   );
