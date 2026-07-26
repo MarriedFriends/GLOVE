@@ -39,9 +39,18 @@ export async function signup(formData: FormData) {
   const supabase = await createClient();
   const origin = (await headers()).get("origin");
 
+  const password = String(formData.get("password"));
+  const passwordConfirm = formData.get("password_confirm");
+  // The dedicated signup page sends a confirmation field — check it matches.
+  if (passwordConfirm !== null && String(passwordConfirm) !== password) {
+    redirect(
+      `/signup?error=${encodeURIComponent("비밀번호가 서로 일치하지 않아요.")}`,
+    );
+  }
+
   const { data, error } = await supabase.auth.signUp({
     email: String(formData.get("email")),
-    password: String(formData.get("password")),
+    password,
     options: {
       // Where Supabase sends the user after they click the confirmation link.
       emailRedirectTo: `${origin}/auth/confirm`,
@@ -49,7 +58,7 @@ export async function signup(formData: FormData) {
   });
 
   if (error) {
-    redirect(`/login?error=${encodeURIComponent(error.message)}`);
+    redirect(`/signup?error=${encodeURIComponent(error.message)}`);
   }
 
   // If "Confirm email" is OFF in Supabase, signUp returns a session and the
