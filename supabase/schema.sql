@@ -602,12 +602,13 @@ grant execute on function public.find_candidates(int) to authenticated;
 
 -- ===========================================================================
 -- Daily picks: each user gets exactly 3 candidates per day, fixed until the
--- next 9:00 AM KST refresh. get_daily_candidates() generates (or tops up to)
+-- next 12:00 noon KST refresh (same moment the like-acceptance results are
+-- announced — the app's daily heartbeat). get_daily_candidates() generates (or tops up to)
 -- today's set on first call of the day and returns the same set afterwards.
 -- ===========================================================================
 create table if not exists public.daily_picks (
   user_id      uuid not null references public.profiles (id) on delete cascade,
-  pick_date    date not null,                       -- key of the 9AM~9AM window
+  pick_date    date not null,                       -- key of the noon~noon window
   candidate_id uuid not null references public.profiles (id) on delete cascade,
   score        int  not null default 0,
   created_at   timestamptz not null default now(),
@@ -650,8 +651,8 @@ set search_path = ''
 as $$
 declare
   uid uuid := (select auth.uid());
-  -- The "day" flips at 09:00 Asia/Seoul: subtract 9h from KST local time.
-  today date := ((now() at time zone 'Asia/Seoul') - interval '9 hours')::date;
+  -- The "day" flips at 12:00 noon Asia/Seoul: subtract 12h from KST time.
+  today date := ((now() at time zone 'Asia/Seoul') - interval '12 hours')::date;
   existing int;
 begin
   select count(*) into existing
@@ -1039,6 +1040,20 @@ $$;
 
 revoke execute on function public.ready_for_next(uuid) from public, anon;
 grant execute on function public.ready_for_next(uuid) to authenticated;
+
+-- Matches stream live so both people get the "채팅 시작" alert the moment
+-- the noon settlement creates their match.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime'
+      and schemaname = 'public'
+      and tablename = 'matches'
+  ) then
+    alter publication supabase_realtime add table public.matches;
+  end if;
+end $$;
 
 -- Stream round changes (new question, both-submitted reveal, pass) live.
 do $$

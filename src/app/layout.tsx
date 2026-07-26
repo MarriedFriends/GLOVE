@@ -4,6 +4,7 @@ import "./globals.css";
 
 import { createClient } from "@/lib/supabase/server";
 import { MessageNotifier } from "@/components/MessageNotifier";
+import { NoonNotifier } from "@/components/NoonNotifier";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,11 +29,13 @@ export default async function RootLayout({
   // Mount the global message notifier when the user has a live chat, so new
   // messages alert them on every page of the app.
   let notifier: React.ReactNode = null;
+  let noonNotifier: React.ReactNode = null;
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (user) {
+    noonNotifier = <NoonNotifier userId={user.id} />;
     const { data: matches } = await supabase
       .from("matches")
       .select("id, user_low, user_high, created_at")
@@ -68,6 +71,7 @@ export default async function RootLayout({
       <body className="min-h-full flex flex-col">
         {children}
         {notifier}
+        {noonNotifier}
       </body>
     </html>
   );

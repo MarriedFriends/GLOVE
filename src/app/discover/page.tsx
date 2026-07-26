@@ -128,7 +128,7 @@ export default async function DiscoverPage({
               오늘은 조건에 맞는 상대를 찾지 못했어요
             </p>
             <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-              내일 아침 9시에 다시 찾아드릴게요. 나이·키 범위를 넓히거나
+              내일 낮 12시에 다시 찾아드릴게요. 나이·키 범위를 넓히거나
               &ldquo;다른 학교도 좋아요&rdquo;로 바꾸면 만날 확률이 올라가요.
             </p>
             <Link
@@ -141,7 +141,7 @@ export default async function DiscoverPage({
         ) : (
           <>
             <p className="mb-4 text-center text-sm text-zinc-500 dark:text-zinc-400">
-              매일 아침 9시, 새로운 3명이 찾아와요 · 배너를 누르면 상세 정보
+              매일 낮 12시, 새로운 3명이 찾아와요 · 배너를 누르면 상세 정보
             </p>
             <DiscoverList candidates={candidates} prefs={prefs} />
           </>
