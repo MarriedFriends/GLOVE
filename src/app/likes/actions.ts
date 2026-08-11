@@ -17,13 +17,15 @@ export async function acceptLike(formData: FormData) {
   if (!user) redirect("/login");
 
   const likerId = String(formData.get("liker_id") ?? "");
+  const mode = formData.get("mode") === "friend" ? "friend" : "date";
   if (!likerId) redirect("/likes");
 
-  // One chat at a time: can't accept while my current 48h chat is running.
+  // One chat per mode: can't accept while my 48h chat (this mode) is running.
   const { data: myMatches } = await supabase
     .from("matches")
     .select("created_at")
-    .eq("status", "active");
+    .eq("status", "active")
+    .eq("mode", mode);
   const busy = (myMatches ?? []).some(
     (m) => Date.now() - +new Date(m.created_at) < 48 * 3600 * 1000,
   );
@@ -41,13 +43,14 @@ export async function acceptLike(formData: FormData) {
     .select("liker_id")
     .eq("liker_id", likerId)
     .eq("likee_id", user.id)
+    .eq("mode", mode)
     .eq("is_like", true)
     .maybeSingle();
   if (!theirLike) redirect("/likes");
 
   const { error } = await supabase.from("likes").upsert(
-    { liker_id: user.id, likee_id: likerId, is_like: true },
-    { onConflict: "liker_id,likee_id", ignoreDuplicates: true },
+    { liker_id: user.id, likee_id: likerId, mode, is_like: true },
+    { onConflict: "liker_id,likee_id,mode", ignoreDuplicates: true },
   );
   if (error) redirect(`/likes?error=${encodeURIComponent(error.message)}`);
 

@@ -8,9 +8,11 @@ import { DiscoverList } from "./DiscoverList";
 export default async function DiscoverPage({
   searchParams,
 }: {
-  searchParams: Promise<{ matched?: string; error?: string }>;
+  searchParams: Promise<{ matched?: string; error?: string; mode?: string }>;
 }) {
-  const { matched, error } = await searchParams;
+  const { matched, error, mode: modeParam } = await searchParams;
+  const mode = modeParam === "friend" ? ("friend" as const) : ("date" as const);
+  const isFriend = mode === "friend";
 
   const supabase = await createClient();
   const {
@@ -29,10 +31,14 @@ export default async function DiscoverPage({
       .from("match_preferences")
       .select("*")
       .eq("user_id", user.id)
-      .eq("mode", "date")
+      .eq("mode", mode)
       .maybeSingle(),
-    supabase.rpc("get_daily_candidates"),
-    supabase.from("matches").select("id, created_at").eq("status", "active"),
+    supabase.rpc("get_daily_candidates", { p_mode: mode }),
+    supabase
+      .from("matches")
+      .select("id, created_at")
+      .eq("status", "active")
+      .eq("mode", mode),
   ]);
 
   if (!isProfileComplete(profileRes.data)) redirect("/onboarding");
@@ -45,7 +51,7 @@ export default async function DiscoverPage({
   // No saved preferences yet → set them up first. (Full row: the list view
   // compares each candidate against these conditions to highlight matches.)
   const prefs = prefsRes.data;
-  if (!prefs) redirect("/find");
+  if (!prefs) redirect(isFriend ? "/find?mode=friend" : "/find");
 
   const { data: candidates, error: rpcError } = candidatesRes;
 
@@ -60,10 +66,10 @@ export default async function DiscoverPage({
             ← 홈
           </Link>
           <p className="text-sm font-medium uppercase tracking-widest text-rose-500">
-            오늘의 추천
+            {isFriend ? "오늘의 친구 추천" : "오늘의 추천"}
           </p>
           <Link
-            href="/find"
+            href={isFriend ? "/find?mode=friend" : "/find"}
             className="text-sm font-medium text-zinc-500 dark:text-zinc-400"
           >
             조건 수정
@@ -132,7 +138,7 @@ export default async function DiscoverPage({
               &ldquo;다른 학교도 좋아요&rdquo;로 바꾸면 만날 확률이 올라가요.
             </p>
             <Link
-              href="/find"
+              href={isFriend ? "/find?mode=friend" : "/find"}
               className="mt-5 inline-block rounded-full bg-gradient-to-r from-rose-500 to-pink-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-rose-500/30"
             >
               조건 다시 설정하기
@@ -141,9 +147,10 @@ export default async function DiscoverPage({
         ) : (
           <>
             <p className="mb-4 text-center text-sm text-zinc-500 dark:text-zinc-400">
-              매일 낮 12시, 새로운 3명이 찾아와요 · 배너를 누르면 상세 정보
+              매일 낮 12시, 새로운 {isFriend ? "친구 후보" : ""} 3명이
+              찾아와요 · 배너를 누르면 상세 정보
             </p>
-            <DiscoverList candidates={candidates} prefs={prefs} />
+            <DiscoverList candidates={candidates} prefs={prefs} mode={mode} />
           </>
         )}
       </div>

@@ -23,27 +23,33 @@ export default async function LikesPage({
   const [likesRes, matchesRes, myLikesRes] = await Promise.all([
     supabase
       .from("likes")
-      .select("liker_id, created_at")
+      .select("liker_id, mode, created_at")
       .eq("likee_id", user.id)
       .eq("is_like", true)
       .order("created_at", { ascending: false }),
-    supabase.from("matches").select("user_low, user_high"),
+    supabase.from("matches").select("user_low, user_high, mode"),
     supabase
       .from("likes")
-      .select("likee_id")
+      .select("likee_id, mode")
       .eq("liker_id", user.id)
       .eq("is_like", true),
   ]);
 
-  // Hide likes that already became a match (any status).
-  const matchedIds = new Set(
-    (matchesRes.data ?? []).flatMap((m) => [m.user_low, m.user_high]),
+  // Hide likes that already became a match in that mode, and ones I've
+  // already accepted (waiting for the noon announcement).
+  const matchedKeys = new Set(
+    (matchesRes.data ?? []).flatMap((m) => [
+      `${m.user_low}:${m.mode}`,
+      `${m.user_high}:${m.mode}`,
+    ]),
   );
-  // Hide likes already matched AND ones I've already accepted (waiting for
-  // the noon announcement).
-  const myLikedIds = new Set((myLikesRes.data ?? []).map((l) => l.likee_id));
+  const myLikedKeys = new Set(
+    (myLikesRes.data ?? []).map((l) => `${l.likee_id}:${l.mode}`),
+  );
   const pending = (likesRes.data ?? []).filter(
-    (l) => !matchedIds.has(l.liker_id) && !myLikedIds.has(l.liker_id),
+    (l) =>
+      !matchedKeys.has(`${l.liker_id}:${l.mode}`) &&
+      !myLikedKeys.has(`${l.liker_id}:${l.mode}`),
   );
 
   const { data: profiles } = pending.length
@@ -61,8 +67,14 @@ export default async function LikesPage({
   const thisYear = new Date().getFullYear();
   // Blocked/inactive likers are filtered out by RLS on profiles.
   const likers = pending
-    .map((l) => (profiles ?? []).find((p) => p.id === l.liker_id))
-    .filter((p): p is NonNullable<typeof p> => Boolean(p));
+    .map((l) => ({
+      like: l,
+      profile: (profiles ?? []).find((p) => p.id === l.liker_id),
+    }))
+    .filter(
+      (x): x is { like: (typeof pending)[number]; profile: NonNullable<typeof x.profile> } =>
+        Boolean(x.profile),
+    );
 
   return (
     <div className="flex flex-1 justify-center bg-gradient-to-b from-rose-50 via-white to-white px-6 py-12 font-sans dark:from-rose-950/30 dark:via-black dark:to-black">
@@ -105,11 +117,11 @@ export default async function LikesPage({
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            {likers.map((p) => {
+            {likers.map(({ like, profile: p }) => {
               const face = FACE_OPTIONS.find((o) => o.value === p.face_type);
               return (
                 <div
-                  key={p.id}
+                  key={`${p.id}:${like.mode}`}
                   className="rounded-3xl border border-black/[.08] bg-white/80 p-5 dark:border-white/[.12] dark:bg-white/[.04]"
                 >
                   <div className="flex items-center gap-3">
@@ -131,7 +143,9 @@ export default async function LikesPage({
                           : ""}
                       </p>
                     </div>
-                    <span className="text-xl">💗</span>
+                    <span className="rounded-full bg-black/[.05] px-2 py-1 text-xs font-semibold dark:bg-white/[.1]">
+                      {like.mode === "friend" ? "🤝 친구" : "💗 이성"}
+                    </span>
                   </div>
 
                   {p.hobbies.length > 0 && (
@@ -149,8 +163,10 @@ export default async function LikesPage({
 
                   <form action={acceptLike} className="mt-4">
                     <input type="hidden" name="liker_id" value={p.id} />
+                    <input type="hidden" name="mode" value={like.mode} />
                     <button className="w-full rounded-full bg-gradient-to-r from-rose-500 to-pink-500 py-3 text-sm font-semibold text-white shadow-lg shadow-rose-500/30 transition-transform hover:scale-[1.02]">
-                      💗 수락하기 (낮 12시에 결과 공개)
+                      {like.mode === "friend" ? "🤝" : "💗"} 수락하기 (낮
+                      12시에 결과 공개)
                     </button>
                   </form>
                 </div>

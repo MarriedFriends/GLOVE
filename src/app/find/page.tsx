@@ -4,13 +4,15 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { isProfileComplete, SURVEY_FIELDS } from "@/lib/profile";
 import { FindWizard } from "./FindWizard";
+import { FriendWizard } from "./FriendWizard";
 
 export default async function FindPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  searchParams: Promise<{ error?: string; mode?: string }>;
 }) {
-  const { error } = await searchParams;
+  const { error, mode } = await searchParams;
+  const isFriend = mode === "friend";
 
   // Must have finished the survey before setting match preferences.
   const supabase = await createClient();
@@ -37,12 +39,16 @@ export default async function FindPage({
             ✕ 닫기
           </Link>
           <p className="text-sm font-medium uppercase tracking-widest text-rose-500">
-            이성 찾기
+            {isFriend ? "친구 찾기" : "이성 찾기"}
           </p>
           <span className="w-10" />
         </div>
         <div className="flex justify-center">
-          <FindWizard error={error} />
+          {isFriend ? (
+            <FriendWizard error={error} />
+          ) : (
+            <FindWizard error={error} />
+          )}
         </div>
       </div>
     </div>

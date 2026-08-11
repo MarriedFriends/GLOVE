@@ -28,7 +28,7 @@ export default async function RootLayout({
 }>) {
   // Mount the global message notifier when the user has a live chat, so new
   // messages alert them on every page of the app.
-  let notifier: React.ReactNode = null;
+  let notifiers: React.ReactNode[] = [];
   let noonNotifier: React.ReactNode = null;
   const supabase = await createClient();
   const {
@@ -40,26 +40,29 @@ export default async function RootLayout({
       .from("matches")
       .select("id, user_low, user_high, created_at")
       .eq("status", "active");
-    const activeChat = (matches ?? []).find(
+    const activeChats = (matches ?? []).filter(
       (m) => Date.now() - +new Date(m.created_at) < 48 * 3600 * 1000,
     );
-    if (activeChat) {
-      const otherId =
-        activeChat.user_low === user.id
-          ? activeChat.user_high
-          : activeChat.user_low;
-      const { data: partner } = await supabase
-        .from("profiles")
-        .select("handle")
-        .eq("id", otherId)
-        .maybeSingle();
-      notifier = (
-        <MessageNotifier
-          userId={user.id}
-          matchId={activeChat.id}
-          partnerHandle={partner?.handle ?? "상대"}
-        />
+    if (activeChats.length) {
+      const otherIds = activeChats.map((m) =>
+        m.user_low === user.id ? m.user_high : m.user_low,
       );
+      const { data: partners } = await supabase
+        .from("profiles")
+        .select("id, handle")
+        .in("id", otherIds);
+      notifiers = activeChats.map((m) => {
+        const otherId = m.user_low === user.id ? m.user_high : m.user_low;
+        const partner = (partners ?? []).find((p) => p.id === otherId);
+        return (
+          <MessageNotifier
+            key={m.id}
+            userId={user.id}
+            matchId={m.id}
+            partnerHandle={partner?.handle ?? "상대"}
+          />
+        );
+      });
     }
   }
 
@@ -70,7 +73,7 @@ export default async function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         {children}
-        {notifier}
+        {notifiers}
         {noonNotifier}
       </body>
     </html>

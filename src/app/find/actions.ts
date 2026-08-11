@@ -16,8 +16,10 @@ import {
   HOBBY_OPTIONS,
 } from "@/lib/onboarding-options";
 
-function fail(message: string): never {
-  redirect(`/find?error=${encodeURIComponent(message)}`);
+function fail(message: string, mode: "date" | "friend" = "date"): never {
+  redirect(
+    `/find?${mode === "friend" ? "mode=friend&" : ""}error=${encodeURIComponent(message)}`,
+  );
 }
 
 export async function savePreferences(formData: FormData) {
@@ -27,6 +29,7 @@ export async function savePreferences(formData: FormData) {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  const mode = formData.get("mode") === "friend" ? "friend" : "date";
   const minAge = Number(formData.get("min_age"));
   const maxAge = Number(formData.get("max_age"));
   const minAdmission = Number(formData.get("min_admission_year"));
@@ -41,6 +44,49 @@ export async function savePreferences(formData: FormData) {
   const militaryOnly = formData.get("military_only") === "true";
   const prefDateFreqs = formData.getAll("pref_date_freqs").map(String);
   const prefStyles = formData.getAll("pref_styles").map(String);
+
+  if (mode === "friend") {
+    const vr = (lo: number, hi: number, min: number, max: number) =>
+      Number.isInteger(lo) && Number.isInteger(hi) && lo >= min && hi <= max && lo <= hi;
+    if (!vr(minAge, maxAge, MIN_AGE, MAX_AGE)) {
+      fail("나이 범위를 다시 설정해주세요.", "friend");
+    }
+    if (!vr(minAdmission, maxAdmission, MIN_ADMISSION_YEAR, MAX_ADMISSION_YEAR)) {
+      fail("학번 범위를 다시 설정해주세요.", "friend");
+    }
+    if (!["same", "different", "any"].includes(universityScope)) {
+      fail("학교 조건을 선택해주세요.", "friend");
+    }
+    if (!HOBBY_OPTIONS.includes(hobby as (typeof HOBBY_OPTIONS)[number])) {
+      fail("함께하고 싶은 취미를 골라주세요.", "friend");
+    }
+
+    const { error } = await supabase.from("match_preferences").upsert({
+      user_id: user.id,
+      mode: "friend",
+      min_age: minAge,
+      max_age: maxAge,
+      min_admission_year: minAdmission,
+      max_admission_year: maxAdmission,
+      same_university: universityScope === "same",
+      university_scope: universityScope as "same" | "different" | "any",
+      // Friendship doesn't filter looks/lifestyle — store wide-open defaults.
+      min_height_idx: 0,
+      max_height_idx: 9,
+      face_types: [],
+      nonsmoker_only: false,
+      military_only: false,
+      pref_date_freqs: [],
+      pref_styles: [],
+      hobby,
+      intro: "반가워요! 마음 맞는 친구를 찾고 있어요 🤝",
+      updated_at: new Date().toISOString(),
+    });
+    if (error) fail(error.message, "friend");
+
+    revalidatePath("/", "layout");
+    redirect("/discover?mode=friend");
+  }
 
   const validRange = (lo: number, hi: number, min: number, max: number) =>
     Number.isInteger(lo) &&

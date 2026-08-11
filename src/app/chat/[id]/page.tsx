@@ -20,7 +20,7 @@ export default async function ChatPage({
   // RLS returns the match only if I'm a participant.
   const { data: match } = await supabase
     .from("matches")
-    .select("id, user_low, user_high, status, created_at")
+    .select("id, user_low, user_high, mode, status, created_at")
     .eq("id", id)
     .maybeSingle();
   if (!match || match.status !== "active") redirect("/matches");
@@ -39,7 +39,12 @@ export default async function ChatPage({
       .eq("match_id", match.id)
       .order("created_at", { ascending: true })
       .limit(200),
-    supabase.from("questions").select("*").order("stage").order("ord"),
+    supabase
+      .from("questions")
+      .select("*")
+      .in("category", ["both", match.mode])
+      .order("stage")
+      .order("ord"),
     supabase
       .from("question_rounds")
       .select("*")

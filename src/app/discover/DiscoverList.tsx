@@ -67,9 +67,11 @@ function scoreTier(score: number): { label: string; classes: string } {
 export function DiscoverList({
   candidates,
   prefs,
+  mode = "date",
 }: {
   candidates: Candidate[];
   prefs: Prefs;
+  mode?: "date" | "friend";
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -86,6 +88,7 @@ export function DiscoverList({
         // (Age/학번 are shown small next to the name instead.)
         const matchedChips: string[] = [];
         if (
+          (prefs.min_height_idx > 0 || prefs.max_height_idx < 9) &&
           heightIdx >= prefs.min_height_idx &&
           heightIdx <= prefs.max_height_idx
         ) {
@@ -224,6 +227,7 @@ export function DiscoverList({
                   </div>
                 ) : (
                   <form action={sendLike} className="mt-5">
+                    <input type="hidden" name="mode" value={mode} />
                     <input
                       type="hidden"
                       name="likee_id"

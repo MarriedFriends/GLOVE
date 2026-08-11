@@ -180,6 +180,7 @@ export interface Database {
       daily_picks: {
         Row: {
           user_id: string;
+          mode: "date" | "friend";
           pick_date: string;
           candidate_id: string;
           score: number;
@@ -187,6 +188,7 @@ export interface Database {
         };
         Insert: {
           user_id: string;
+          mode?: "date" | "friend";
           pick_date: string;
           candidate_id: string;
           score?: number;
@@ -194,6 +196,7 @@ export interface Database {
         };
         Update: {
           user_id?: string;
+          mode?: "date" | "friend";
           pick_date?: string;
           candidate_id?: string;
           score?: number;
@@ -218,18 +221,21 @@ export interface Database {
         Row: {
           liker_id: string;
           likee_id: string;
+          mode: "date" | "friend";
           is_like: boolean;
           created_at: string;
         };
         Insert: {
           liker_id: string;
           likee_id: string;
+          mode?: "date" | "friend";
           is_like?: boolean;
           created_at?: string;
         };
         Update: {
           liker_id?: string;
           likee_id?: string;
+          mode?: "date" | "friend";
           is_like?: boolean;
           created_at?: string;
         };
@@ -253,6 +259,7 @@ export interface Database {
           id: string;
           user_low: string;
           user_high: string;
+          mode: "date" | "friend";
           status: MatchStatus;
           created_at: string;
         };
@@ -260,6 +267,7 @@ export interface Database {
           id?: string;
           user_low: string;
           user_high: string;
+          mode?: "date" | "friend";
           status?: MatchStatus;
           created_at?: string;
         };
@@ -267,6 +275,7 @@ export interface Database {
           id?: string;
           user_low?: string;
           user_high?: string;
+          mode?: "date" | "friend";
           status?: MatchStatus;
           created_at?: string;
         };
@@ -337,18 +346,21 @@ export interface Database {
           stage: number;
           ord: number;
           prompt: string;
+          category: "both" | "date" | "friend";
         };
         Insert: {
           id: number;
           stage: number;
           ord: number;
           prompt: string;
+          category?: "both" | "date" | "friend";
         };
         Update: {
           id?: number;
           stage?: number;
           ord?: number;
           prompt?: string;
+          category?: "both" | "date" | "friend";
         };
         Relationships: [];
       };
@@ -565,7 +577,7 @@ export interface Database {
         Returns: undefined;
       };
       get_daily_candidates: {
-        Args: Record<string, never>;
+        Args: { p_mode?: "date" | "friend" };
         Returns: {
           candidate_id: string;
           handle: string;
@@ -586,7 +598,7 @@ export interface Database {
         }[];
       };
       find_candidates: {
-        Args: { max_results?: number };
+        Args: { max_results?: number; p_mode?: "date" | "friend" };
         Returns: {
           candidate_id: string;
           handle: string;

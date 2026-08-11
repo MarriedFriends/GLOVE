@@ -16,7 +16,7 @@ export default async function MatchesPage() {
   // RLS already limits this to matches I participate in.
   const { data: matches } = await supabase
     .from("matches")
-    .select("id, user_low, user_high, created_at")
+    .select("id, user_low, user_high, mode, created_at")
     .eq("status", "active")
     .order("created_at", { ascending: false });
 
@@ -102,11 +102,10 @@ export default async function MatchesPage() {
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-zinc-900 dark:text-white">
                     {other?.handle ?? "알 수 없음"}
-                    {other?.mbti && (
-                      <span className="ml-2 text-xs font-medium text-zinc-400">
-                        {other.mbti}
-                      </span>
-                    )}
+                    <span className="ml-2 text-xs font-medium text-zinc-400">
+                      {match.mode === "friend" ? "🤝 친구" : "💗 이성"}
+                      {other?.mbti ? ` · ${other.mbti}` : ""}
+                    </span>
                   </p>
                   <p className="truncate text-sm text-zinc-500 dark:text-zinc-400">
                     {expired

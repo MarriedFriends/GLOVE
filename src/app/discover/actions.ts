@@ -18,34 +18,37 @@ export async function sendLike(formData: FormData) {
   if (!user) redirect("/login");
 
   const likeeId = String(formData.get("likee_id") ?? "");
-  if (!likeeId) redirect("/discover");
+  const mode = formData.get("mode") === "friend" ? "friend" : "date";
+  const back = mode === "friend" ? "/discover?mode=friend" : "/discover";
+  const backErr = (msg: string) =>
+    `${back}${mode === "friend" ? "&" : "?"}error=${encodeURIComponent(msg)}`;
+  if (!likeeId) redirect(back);
 
-  // One chat at a time: no sending likes while my 48h chat is running.
+  // One chat per mode: no sending likes while my 48h chat (this mode) runs.
   const { data: myMatches } = await supabase
     .from("matches")
     .select("created_at")
-    .eq("status", "active");
+    .eq("status", "active")
+    .eq("mode", mode);
   const busy = (myMatches ?? []).some(
     (m) => Date.now() - +new Date(m.created_at) < 48 * 3600 * 1000,
   );
   if (busy) {
     redirect(
-      `/discover?error=${encodeURIComponent(
-        "채팅 진행 중에는 좋아요를 보낼 수 없어요. 48시간 채팅이 끝나면 다시 만나요!",
-      )}`,
+      backErr("채팅 진행 중에는 좋아요를 보낼 수 없어요. 48시간 채팅이 끝나면 다시 만나요!"),
     );
   }
 
   // ignoreDuplicates: pressing the button twice must not error.
   const { error } = await supabase.from("likes").upsert(
-    { liker_id: user.id, likee_id: likeeId, is_like: true },
-    { onConflict: "liker_id,likee_id", ignoreDuplicates: true },
+    { liker_id: user.id, likee_id: likeeId, mode, is_like: true },
+    { onConflict: "liker_id,likee_id,mode", ignoreDuplicates: true },
   );
   if (error) {
-    redirect(`/discover?error=${encodeURIComponent(error.message)}`);
+    redirect(backErr(error.message));
   }
 
   // Results (including mutual likes) are announced at the next 12:00 noon.
   revalidatePath("/discover");
-  redirect("/discover");
+  redirect(back);
 }

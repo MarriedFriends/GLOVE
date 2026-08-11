@@ -123,12 +123,19 @@ create policy "Manage own preferences"
 create table if not exists public.likes (
   liker_id   uuid not null references public.profiles (id) on delete cascade,
   likee_id   uuid not null references public.profiles (id) on delete cascade,
+  mode       text not null default 'date' check (mode in ('date', 'friend')),
   is_like    boolean not null default true,            -- true = like, false = pass
   created_at timestamptz not null default now(),
-  primary key (liker_id, likee_id),
+  primary key (liker_id, likee_id, mode),
   check (liker_id <> likee_id)
 );
 create index if not exists likes_likee_idx on public.likes (likee_id);
+
+-- Friend mode shares the tables — likes are scoped per mode.
+alter table public.likes add column if not exists mode text not null default 'date'
+  check (mode in ('date', 'friend'));
+alter table public.likes drop constraint if exists likes_pkey;
+alter table public.likes add primary key (liker_id, likee_id, mode);
 
 -- ===========================================================================
 -- matches: created automatically on a mutual like. Users never insert directly.
@@ -138,11 +145,19 @@ create table if not exists public.matches (
   id         uuid primary key default gen_random_uuid(),
   user_low   uuid not null references public.profiles (id) on delete cascade,
   user_high  uuid not null references public.profiles (id) on delete cascade,
+  mode       text not null default 'date' check (mode in ('date', 'friend')),
   status     text not null default 'active' check (status in ('active', 'unmatched')),
   created_at timestamptz not null default now(),
-  unique (user_low, user_high),
+  unique (user_low, user_high, mode),
   check (user_low < user_high)
 );
+
+alter table public.matches add column if not exists mode text not null default 'date'
+  check (mode in ('date', 'friend'));
+alter table public.matches drop constraint if exists matches_user_low_user_high_key;
+alter table public.matches drop constraint if exists matches_user_low_user_high_mode_key;
+alter table public.matches add constraint matches_user_low_user_high_mode_key
+  unique (user_low, user_high, mode);
 create index if not exists matches_user_high_idx on public.matches (user_high);
 
 -- ===========================================================================
@@ -259,6 +274,7 @@ create policy "Create own likes"
     and not exists (
       select 1 from public.matches m
       where m.status = 'active'
+        and m.mode = likes.mode
         and m.created_at > now() - interval '48 hours'
         and (select auth.uid()) in (m.user_low, m.user_high)
     )
@@ -413,11 +429,12 @@ begin
   end if;
 
   for pair in
-    select l1.liker_id as a, l1.likee_id as b,
+    select l1.liker_id as a, l1.likee_id as b, l1.mode as pair_mode,
            greatest(l1.created_at, l2.created_at) as mutual_at
     from public.likes l1
     join public.likes l2
       on l2.liker_id = l1.likee_id and l2.likee_id = l1.liker_id
+     and l2.mode = l1.mode
     where l1.is_like and l2.is_like
       and l1.liker_id < l1.likee_id           -- visit each pair once
       and greatest(l1.created_at, l2.created_at) <= last_noon
@@ -425,18 +442,20 @@ begin
         select 1 from public.matches m
         where m.user_low = least(l1.liker_id, l1.likee_id)
           and m.user_high = greatest(l1.liker_id, l1.likee_id)
+          and m.mode = l1.mode
       )
     order by mutual_at
   loop
     if not exists (
       select 1 from public.matches m
       where m.status = 'active'
+        and m.mode = pair.pair_mode
         and m.created_at > now() - interval '48 hours'
         and (pair.a in (m.user_low, m.user_high)
           or pair.b in (m.user_low, m.user_high))
     ) then
-      insert into public.matches (user_low, user_high)
-      values (least(pair.a, pair.b), greatest(pair.a, pair.b))
+      insert into public.matches (user_low, user_high, mode)
+      values (least(pair.a, pair.b), greatest(pair.a, pair.b), pair.pair_mode)
       on conflict do nothing;
     end if;
   end loop;
@@ -446,12 +465,14 @@ begin
     and l.created_at <= last_noon - interval '24 hours'
     and not exists (
       select 1 from public.likes r
-      where r.liker_id = l.likee_id and r.likee_id = l.liker_id and r.is_like
+      where r.liker_id = l.likee_id and r.likee_id = l.liker_id
+        and r.is_like and r.mode = l.mode
     )
     and not exists (
       select 1 from public.matches m
       where m.user_low = least(l.liker_id, l.likee_id)
         and m.user_high = greatest(l.liker_id, l.likee_id)
+        and m.mode = l.mode
     );
 end;
 $$;
@@ -471,7 +492,8 @@ grant execute on function public.process_pending_matches() to authenticated;
 --   +20  I also satisfy THEIR saved filters (mutual fit)
 -- ===========================================================================
 drop function if exists public.find_candidates(int);
-create function public.find_candidates(max_results int default 5)
+drop function if exists public.find_candidates(int, text);
+create function public.find_candidates(max_results int default 5, p_mode text default 'date')
 returns table (
   candidate_id   uuid,
   handle         text,
@@ -508,7 +530,7 @@ as $$
            mp.pref_date_freqs, mp.pref_styles
     from public.profiles p
     join public.match_preferences mp
-      on mp.user_id = p.id and mp.mode = 'date'
+      on mp.user_id = p.id and mp.mode = p_mode
     where p.id = (select auth.uid())
   )
   select
@@ -554,15 +576,19 @@ as $$
   cross join height_order h
   join public.profiles c on c.id <> me.id
   left join public.match_preferences cmp
-    on cmp.user_id = c.id and cmp.mode = 'date'
+    on cmp.user_id = c.id and cmp.mode = p_mode
   where c.is_active
     and c.birth_year is not null
     and c.admission_year is not null
     and c.height_range is not null
     and c.face_type is not null
     and c.mbti is not null
-    and ((me.gender = 'male' and c.gender = 'female')
-      or (me.gender = 'female' and c.gender = 'male'))
+    and (
+      (p_mode = 'date'
+        and ((me.gender = 'male' and c.gender = 'female')
+          or (me.gender = 'female' and c.gender = 'male')))
+      or (p_mode = 'friend' and c.gender = me.gender)
+    )
     and (extract(year from now())::int - c.birth_year)
           between me.min_age and me.max_age
     and c.admission_year
@@ -582,6 +608,7 @@ as $$
       select 1 from public.matches mb
       where c.id in (mb.user_low, mb.user_high)
         and mb.status = 'active'
+        and mb.mode = p_mode
         and mb.created_at > now() - interval '48 hours'
     )
     and not exists (
@@ -591,19 +618,20 @@ as $$
     )
     and not exists (
       select 1 from public.likes l
-      where l.liker_id = me.id and l.likee_id = c.id
+      where l.liker_id = me.id and l.likee_id = c.id and l.mode = p_mode
     )
     and not exists (
       select 1 from public.matches m
       where m.user_low = least(me.id, c.id)
         and m.user_high = greatest(me.id, c.id)
+        and m.mode = p_mode
     )
   order by 15 desc, c.created_at desc
   limit max_results
 $$;
 
-revoke execute on function public.find_candidates(int) from public, anon;
-grant execute on function public.find_candidates(int) to authenticated;
+revoke execute on function public.find_candidates(int, text) from public, anon;
+grant execute on function public.find_candidates(int, text) to authenticated;
 
 -- ===========================================================================
 -- Daily picks: each user gets exactly 3 candidates per day, fixed until the
@@ -613,12 +641,18 @@ grant execute on function public.find_candidates(int) to authenticated;
 -- ===========================================================================
 create table if not exists public.daily_picks (
   user_id      uuid not null references public.profiles (id) on delete cascade,
+  mode         text not null default 'date' check (mode in ('date', 'friend')),
   pick_date    date not null,                       -- key of the noon~noon window
   candidate_id uuid not null references public.profiles (id) on delete cascade,
   score        int  not null default 0,
   created_at   timestamptz not null default now(),
-  primary key (user_id, pick_date, candidate_id)
+  primary key (user_id, mode, pick_date, candidate_id)
 );
+
+alter table public.daily_picks add column if not exists mode text not null default 'date'
+  check (mode in ('date', 'friend'));
+alter table public.daily_picks drop constraint if exists daily_picks_pkey;
+alter table public.daily_picks add primary key (user_id, mode, pick_date, candidate_id);
 
 alter table public.daily_picks enable row level security;
 
@@ -630,7 +664,8 @@ create policy "Read own picks"
 -- No INSERT policy: rows are written only by the security-definer function.
 
 drop function if exists public.get_daily_candidates();
-create function public.get_daily_candidates()
+drop function if exists public.get_daily_candidates(text);
+create function public.get_daily_candidates(p_mode text default 'date')
 returns table (
   candidate_id   uuid,
   handle         text,
@@ -662,16 +697,16 @@ declare
 begin
   select count(*) into existing
   from public.daily_picks dp
-  where dp.user_id = uid and dp.pick_date = today;
+  where dp.user_id = uid and dp.mode = p_mode and dp.pick_date = today;
 
   if existing < 3 then
-    insert into public.daily_picks (user_id, pick_date, candidate_id, score)
-    select uid, today, fc.candidate_id, fc.score
-    from public.find_candidates(50) fc
+    insert into public.daily_picks (user_id, mode, pick_date, candidate_id, score)
+    select uid, p_mode, today, fc.candidate_id, fc.score
+    from public.find_candidates(50, p_mode) fc
     where fc.candidate_id not in (
       select dp2.candidate_id
       from public.daily_picks dp2
-      where dp2.user_id = uid and dp2.pick_date = today
+      where dp2.user_id = uid and dp2.mode = p_mode and dp2.pick_date = today
     )
     -- People who already liked me jump the queue (they stay anonymous —
     -- they simply appear among my daily picks), then highest score first.
@@ -681,6 +716,7 @@ begin
         where l.liker_id = fc.candidate_id
           and l.likee_id = uid
           and l.is_like
+          and l.mode = p_mode
       ) desc,
       fc.score desc
     limit (3 - existing)
@@ -706,27 +742,30 @@ begin
     dp.score,
     exists (
       select 1 from public.likes l
-      where l.liker_id = uid and l.likee_id = dp.candidate_id and l.is_like
+      where l.liker_id = uid and l.likee_id = dp.candidate_id
+        and l.is_like and l.mode = p_mode
     )
   from public.daily_picks dp
   join public.profiles c on c.id = dp.candidate_id
   left join public.match_preferences cmp
-    on cmp.user_id = dp.candidate_id and cmp.mode = 'date'
+    on cmp.user_id = dp.candidate_id and cmp.mode = p_mode
   where dp.user_id = uid
+    and dp.mode = p_mode
     and dp.pick_date = today
     -- Hide picks who entered a live chat after this morning's selection.
     and not exists (
       select 1 from public.matches mb
       where c.id in (mb.user_low, mb.user_high)
         and mb.status = 'active'
+        and mb.mode = p_mode
         and mb.created_at > now() - interval '48 hours'
     )
   order by dp.score desc;
 end;
 $$;
 
-revoke execute on function public.get_daily_candidates() from public, anon;
-grant execute on function public.get_daily_candidates() to authenticated;
+revoke execute on function public.get_daily_candidates(text) from public, anon;
+grant execute on function public.get_daily_candidates(text) to authenticated;
 
 -- ===========================================================================
 -- Question curriculum: staged icebreaker questions inside each chat.
@@ -739,12 +778,17 @@ grant execute on function public.get_daily_candidates() to authenticated;
 -- enforced server-side.
 -- ===========================================================================
 create table if not exists public.questions (
-  id     int primary key,
-  stage  int not null check (stage between 1 and 3),
-  ord    int not null,
-  prompt text not null,
+  id       int primary key,
+  stage    int not null check (stage between 1 and 3),
+  ord      int not null,
+  prompt   text not null,
+  category text not null default 'both'
+             check (category in ('both', 'date', 'friend')),
   unique (stage, ord)
 );
+
+alter table public.questions add column if not exists category text not null default 'both'
+  check (category in ('both', 'date', 'friend'));
 
 alter table public.questions enable row level security;
 
@@ -782,6 +826,10 @@ insert into public.questions (id, stage, ord, prompt) values
   (14, 3, 4, '나의 어떤 점이 연인에게 가장 좋은 선물이 될까요?'),
   (15, 3, 5, '서로 정체를 공개한다면 제일 먼저 뭘 하고 싶어요?')
 on conflict (id) do nothing;
+
+-- Romance questions never appear in friend-mode chats.
+update public.questions set category = 'date'
+  where id in (6, 7, 8, 14) and category <> 'date';
 
 create table if not exists public.question_rounds (
   id             uuid primary key default gen_random_uuid(),
@@ -875,6 +923,7 @@ begin
   insert into public.question_rounds (match_id, question_id, round_no)
   select new.id, q.id, 1
   from public.questions q
+  where q.category in ('both', new.mode)
   order by q.stage, q.ord
   limit 1
   on conflict do nothing;
@@ -948,14 +997,15 @@ set search_path = ''
 as $$
 declare
   uid uuid := (select auth.uid());
+  v_mode text;
 begin
-  if not exists (
-    select 1 from public.matches m
-    where m.id = p_match_id
-      and m.status = 'active'
-      and m.created_at > now() - interval '48 hours'
-      and uid in (m.user_low, m.user_high)
-  ) then
+  select m.mode into v_mode
+  from public.matches m
+  where m.id = p_match_id
+    and m.status = 'active'
+    and m.created_at > now() - interval '48 hours'
+    and uid in (m.user_low, m.user_high);
+  if v_mode is null then
     raise exception 'not a participant of this match';
   end if;
 
@@ -979,10 +1029,11 @@ begin
                    from public.question_rounds qr2
                    where qr2.match_id = p_match_id), 0) + 1
   from public.questions q
-  where q.id not in (
-    select qr3.question_id from public.question_rounds qr3
-    where qr3.match_id = p_match_id
-  )
+  where q.category in ('both', v_mode)
+    and q.id not in (
+      select qr3.question_id from public.question_rounds qr3
+      where qr3.match_id = p_match_id
+    )
   order by q.stage, q.ord
   limit 1
   on conflict do nothing;

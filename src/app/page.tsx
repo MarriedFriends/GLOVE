@@ -17,9 +17,10 @@ export default async function Home() {
   // of latency instead of three).
   let profile = null;
   let hasDatePrefs = false;
+  let hasFriendPrefs = false;
   let matchCount = 0;
   let incomingLikes = 0;
-  let activeChat: { id: string } | null = null;
+  let activeChats: { id: string; mode: "date" | "friend" }[] = [];
   if (user) {
     // Noon settlement: announce results for mutual likes (creates matches).
     await supabase.rpc("process_pending_matches");
@@ -28,36 +29,42 @@ export default async function Home() {
       supabase.from("profiles").select("*").eq("id", user.id).single(),
       supabase
         .from("match_preferences")
-        .select("user_id")
-        .eq("user_id", user.id)
-        .eq("mode", "date")
-        .maybeSingle(),
-      supabase.from("matches").select("id, user_low, user_high, status, created_at"),
+        .select("mode")
+        .eq("user_id", user.id),
+      supabase
+        .from("matches")
+        .select("id, user_low, user_high, mode, status, created_at"),
       supabase
         .from("likes")
-        .select("liker_id")
+        .select("liker_id, mode")
         .eq("likee_id", user.id)
         .eq("is_like", true),
     ]);
     profile = profileRes.data;
     if (!isProfileComplete(profile)) redirect("/onboarding");
-    hasDatePrefs = Boolean(prefsRes.data);
+    const prefModes = (prefsRes.data ?? []).map((r) => r.mode);
+    hasDatePrefs = prefModes.includes("date");
+    hasFriendPrefs = prefModes.includes("friend");
 
     const matches = matchRes.data ?? [];
     matchCount = matches.filter((m) => m.status === "active").length;
-    activeChat =
-      matches.find(
+    activeChats = matches
+      .filter(
         (m) =>
           m.status === "active" &&
           Date.now() - +new Date(m.created_at) < 48 * 3600 * 1000,
-      ) ?? null;
+      )
+      .map((m) => ({ id: m.id, mode: m.mode }));
 
-    // Incoming likes that haven't already turned into a match.
-    const matchedIds = new Set(
-      matches.flatMap((m) => [m.user_low, m.user_high]),
+    // Incoming likes that haven't already turned into a match (per mode).
+    const matchedKeys = new Set(
+      matches.flatMap((m) => [
+        `${m.user_low}:${m.mode}`,
+        `${m.user_high}:${m.mode}`,
+      ]),
     );
     incomingLikes = (likesRes.data ?? []).filter(
-      (l) => !matchedIds.has(l.liker_id),
+      (l) => !matchedKeys.has(`${l.liker_id}:${l.mode}`),
     ).length;
   }
 
@@ -102,13 +109,15 @@ export default async function Home() {
                   {hasDatePrefs ? "오늘의 추천 보기" : "이성 찾기"}
                 </span>
               </Link>
-              <div className="relative flex flex-col items-center gap-1.5 rounded-2xl border border-black/[.08] bg-white/60 px-4 py-5 text-zinc-400 dark:border-white/[.12] dark:bg-white/[.03] dark:text-zinc-500">
-                <span className="text-3xl opacity-50">🤝</span>
-                <span className="text-sm font-semibold">친구 찾기</span>
-                <span className="absolute right-3 top-3 rounded-full bg-black/[.06] px-2 py-0.5 text-[10px] font-medium dark:bg-white/[.1]">
-                  준비 중
+              <Link
+                href={hasFriendPrefs ? "/discover?mode=friend" : "/find?mode=friend"}
+                className="flex flex-col items-center gap-1.5 rounded-2xl bg-gradient-to-br from-sky-500 to-cyan-500 px-4 py-5 text-white shadow-lg shadow-sky-500/30 transition-transform hover:scale-[1.02]"
+              >
+                <span className="text-3xl">🤝</span>
+                <span className="text-sm font-semibold">
+                  {hasFriendPrefs ? "오늘의 친구 추천" : "친구 찾기"}
                 </span>
-              </div>
+              </Link>
             </div>
 
             <div className="grid w-full grid-cols-2 gap-3">
@@ -124,13 +133,19 @@ export default async function Home() {
                 )}
               </Link>
               <Link
-                href={activeChat ? `/chat/${activeChat.id}` : "/matches"}
+                href={
+                  activeChats.length === 1
+                    ? `/chat/${activeChats[0].id}`
+                    : "/matches"
+                }
                 className="flex items-center justify-center gap-2 rounded-2xl border border-black/[.08] bg-white/60 px-4 py-3.5 text-sm font-semibold text-zinc-700 transition-colors hover:border-rose-300 dark:border-white/[.12] dark:bg-white/[.03] dark:text-zinc-200 dark:hover:border-rose-700"
               >
                 💬 채팅
-                {activeChat ? (
+                {activeChats.length > 0 ? (
                   <span className="rounded-full bg-rose-500 px-2 py-0.5 text-xs font-bold text-white">
-                    진행 중
+                    {activeChats.length === 1
+                      ? "진행 중"
+                      : `${activeChats.length}개 진행 중`}
                   </span>
                 ) : (
                   matchCount > 0 && (
