@@ -52,7 +52,16 @@ export async function updateSession(request: NextRequest) {
     pathname === "/" ||
     pathname.startsWith("/login") ||
     pathname.startsWith("/signup") ||
-    pathname.startsWith("/auth");
+    pathname.startsWith("/auth") ||
+    // Policy pages must be readable before signing up (and store review
+    // requires them to be public).
+    pathname.startsWith("/terms") ||
+    pathname.startsWith("/privacy") ||
+    // PWA assets must be fetchable without a session: the browser requests
+    // the manifest without cookies, and a service-worker script that gets
+    // redirected is rejected by the browser outright.
+    pathname === "/manifest.webmanifest" ||
+    pathname === "/sw.js";
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
