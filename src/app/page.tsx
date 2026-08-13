@@ -2,8 +2,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
+import { isChatLive } from "@/lib/chat-time";
 import { isProfileComplete } from "@/lib/profile";
 import { FACE_OPTIONS } from "@/lib/onboarding-options";
+import { DeleteAccountButton } from "@/components/DeleteAccountButton";
 import { signout } from "./login/actions";
 
 export default async function Home() {
@@ -49,11 +51,7 @@ export default async function Home() {
     const matches = matchRes.data ?? [];
     matchCount = matches.filter((m) => m.status === "active").length;
     activeChats = matches
-      .filter(
-        (m) =>
-          m.status === "active" &&
-          Date.now() - +new Date(m.created_at) < 48 * 3600 * 1000,
-      )
+      .filter((m) => m.status === "active" && isChatLive(m.created_at))
       .map((m) => ({ id: m.id, mode: m.mode }));
 
     // Incoming likes that haven't already turned into a match (per mode).
@@ -213,6 +211,22 @@ export default async function Home() {
             시작하기
           </Link>
         )}
+
+        <div className="flex items-center gap-3 text-xs text-zinc-400 dark:text-zinc-600">
+          <Link href="/terms" className="underline-offset-2 hover:underline">
+            이용약관
+          </Link>
+          <span aria-hidden>·</span>
+          <Link href="/privacy" className="underline-offset-2 hover:underline">
+            개인정보처리방침
+          </Link>
+          {user && (
+            <>
+              <span aria-hidden>·</span>
+              <DeleteAccountButton />
+            </>
+          )}
+        </div>
 
         {/* Small dev indicator — remove before launch */}
         <p className="text-xs text-zinc-400 dark:text-zinc-600">

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
+import { isChatLive } from "@/lib/chat-time";
 import { isProfileComplete, SURVEY_FIELDS } from "@/lib/profile";
 import { DiscoverList } from "./DiscoverList";
 
@@ -44,8 +45,8 @@ export default async function DiscoverPage({
   if (!isProfileComplete(profileRes.data)) redirect("/onboarding");
 
   // While a 48h chat is running, discovery is closed for this user.
-  const activeChat = (matchesRes.data ?? []).find(
-    (m) => Date.now() - +new Date(m.created_at) < 48 * 3600 * 1000,
+  const activeChat = (matchesRes.data ?? []).find((m) =>
+    isChatLive(m.created_at),
   );
 
   // No saved preferences yet → set them up first. (Full row: the list view

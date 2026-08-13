@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 
 import { createClient } from "@/lib/supabase/server";
 import { isProfileComplete, SURVEY_FIELDS } from "@/lib/profile";
+import { isStudentEmail } from "@/lib/student-email";
 
 /**
  * Server Actions handle auth on the server, so the password never lives in
@@ -39,6 +40,15 @@ export async function signup(formData: FormData) {
   const supabase = await createClient();
   const origin = (await headers()).get("origin");
 
+  const email = String(formData.get("email")).trim();
+  if (!isStudentEmail(email)) {
+    redirect(
+      `/signup?error=${encodeURIComponent(
+        "학교 이메일(.ac.kr 또는 .edu)로만 가입할 수 있어요.",
+      )}`,
+    );
+  }
+
   const password = String(formData.get("password"));
   const passwordConfirm = formData.get("password_confirm");
   // The dedicated signup page sends a confirmation field — check it matches.
@@ -49,7 +59,7 @@ export async function signup(formData: FormData) {
   }
 
   const { data, error } = await supabase.auth.signUp({
-    email: String(formData.get("email")),
+    email,
     password,
     options: {
       // Where Supabase sends the user after they click the confirmation link.

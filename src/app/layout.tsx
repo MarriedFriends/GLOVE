@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import { createClient } from "@/lib/supabase/server";
+import { isChatLive } from "@/lib/chat-time";
 import { MessageNotifier } from "@/components/MessageNotifier";
 import { NoonNotifier } from "@/components/NoonNotifier";
 
@@ -40,9 +41,7 @@ export default async function RootLayout({
       .from("matches")
       .select("id, user_low, user_high, created_at")
       .eq("status", "active");
-    const activeChats = (matches ?? []).filter(
-      (m) => Date.now() - +new Date(m.created_at) < 48 * 3600 * 1000,
-    );
+    const activeChats = (matches ?? []).filter((m) => isChatLive(m.created_at));
     if (activeChats.length) {
       const otherIds = activeChats.map((m) =>
         m.user_low === user.id ? m.user_high : m.user_low,

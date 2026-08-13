@@ -382,6 +382,17 @@ security definer
 set search_path = ''
 as $$
 begin
+  -- Students only: the web form validates first (src/lib/student-email.ts),
+  -- but this is the hard gate — calling the auth API directly can't bypass
+  -- it. Plus-addressed dev-inbox mails stay allowed for team test accounts
+  -- (their confirmation mail only lands in our own inbox).
+  if not (
+    lower(coalesce(new.email, '')) ~ '\.(ac\.kr|edu)$'
+    or lower(coalesce(new.email, '')) ~ '^glove309e\+[^@]+@gmail\.com$'
+  ) then
+    raise exception 'student_email_required';
+  end if;
+
   insert into public.profiles (id, handle, university)
   values (
     new.id,
@@ -759,6 +770,12 @@ begin
         and mb.status = 'active'
         and mb.mode = p_mode
         and mb.created_at > now() - interval '48 hours'
+    )
+    -- Hide picks either side has blocked since they were selected.
+    and not exists (
+      select 1 from public.blocks b
+      where (b.blocker_id = uid and b.blocked_id = dp.candidate_id)
+         or (b.blocker_id = dp.candidate_id and b.blocked_id = uid)
     )
   order by dp.score desc;
 end;
@@ -1279,6 +1296,26 @@ create policy "Image read by participants"
         and (select auth.uid()) in (m.user_low, m.user_high)
     )
   );
+
+-- ===========================================================================
+-- Account deletion: removes the auth user; profiles, likes, matches,
+-- messages, picks … all cascade away via foreign keys. security definer is
+-- what grants the delete on auth.users (the function runs as its owner).
+-- ===========================================================================
+create or replace function public.delete_account()
+returns void
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+begin
+  delete from auth.users where id = (select auth.uid());
+end;
+$$;
+
+revoke execute on function public.delete_account() from public, anon;
+grant execute on function public.delete_account() to authenticated;
 
 -- ===========================================================================
 -- Realtime: stream new chat messages to connected clients.

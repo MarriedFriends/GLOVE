@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
+import { isChatLive } from "@/lib/chat-time";
 import { FACE_OPTIONS } from "@/lib/onboarding-options";
 
 export default async function MatchesPage() {
@@ -49,8 +50,7 @@ export default async function MatchesPage() {
     const otherId = m.user_low === user.id ? m.user_high : m.user_low;
     const other = (profiles ?? []).find((p) => p.id === otherId);
     const last = (lastMessages ?? []).find((msg) => msg.match_id === m.id);
-    const expired =
-      Date.now() - +new Date(m.created_at) >= 48 * 3600 * 1000;
+    const expired = !isChatLive(m.created_at);
     return { match: m, other, last, expired };
   });
 

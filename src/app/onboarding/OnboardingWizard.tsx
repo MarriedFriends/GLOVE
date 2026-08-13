@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { generateNickname } from "@/lib/nickname";
 
@@ -50,15 +50,6 @@ export function OnboardingWizard({ error }: { error?: string }) {
 
   const mbtiString = MBTI_PAIRS.map((_, i) => mbti[i] ?? "").join("");
 
-  // Roll a fresh nickname every time the user arrives at the naming step
-  // (answers may have changed if they went back and edited).
-  useEffect(() => {
-    if (step === 10 && face) {
-      setNickname(generateNickname(face, hobbies, mbtiString));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step]);
-
   const canNext = [
     gender !== null,
     true, // sliders always have a value
@@ -73,7 +64,15 @@ export function OnboardingWizard({ error }: { error?: string }) {
     nickname !== null,
   ][step];
 
-  const next = () => setStep((s) => Math.min(s + 1, TOTAL_STEPS - 1));
+  const next = () => {
+    const target = Math.min(step + 1, TOTAL_STEPS - 1);
+    // Roll a fresh nickname every time the user arrives at the naming step
+    // (answers may have changed if they went back and edited).
+    if (target === 10 && step !== target && face) {
+      setNickname(generateNickname(face, hobbies, mbtiString));
+    }
+    setStep(target);
+  };
   const back = () => setStep((s) => Math.max(s - 1, 0));
 
   const pick = (setter: (v: string) => void) => (value: string) => {

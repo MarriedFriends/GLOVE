@@ -564,6 +564,10 @@ export interface Database {
     };
     Views: Record<never, never>;
     Functions: {
+      delete_account: {
+        Args: Record<string, never>;
+        Returns: undefined;
+      };
       process_pending_matches: {
         Args: Record<string, never>;
         Returns: undefined;

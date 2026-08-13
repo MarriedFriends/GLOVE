@@ -67,6 +67,7 @@ export default async function ChatPage({
         matchId={match.id}
         myId={user.id}
         userLow={match.user_low}
+        otherId={otherId}
         other={{ handle: other?.handle ?? "알 수 없음", emoji }}
         matchCreatedAt={match.created_at}
         initialContacts={contacts}

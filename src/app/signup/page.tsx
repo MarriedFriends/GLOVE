@@ -23,7 +23,7 @@ export default async function SignupPage({
             회원가입
           </h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            학교 이메일로 가입하면 인증 메일이 발송돼요.
+            학교 이메일(.ac.kr / .edu)로만 가입할 수 있어요.
           </p>
         </div>
 
@@ -81,6 +81,18 @@ export default async function SignupPage({
           <button className="mt-2 rounded-full bg-gradient-to-r from-rose-500 to-pink-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-rose-500/30 transition-transform hover:scale-[1.02]">
             가입하기
           </button>
+
+          <p className="text-center text-xs leading-5 text-zinc-400 dark:text-zinc-500">
+            가입하면{" "}
+            <Link href="/terms" className="underline underline-offset-2">
+              이용약관
+            </Link>
+            과{" "}
+            <Link href="/privacy" className="underline underline-offset-2">
+              개인정보처리방침
+            </Link>
+            에 동의하는 것으로 간주돼요.
+          </p>
         </form>
 
         <p className="mt-6 text-center text-sm text-zinc-500 dark:text-zinc-400">

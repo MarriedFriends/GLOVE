@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 import { MAX_RECORD_SECONDS, modulateVoice } from "@/lib/voice";
+import { SafetyMenu } from "@/components/SafetyMenu";
 import { DrawingModal } from "./DrawingModal";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -34,6 +35,7 @@ export function ChatRoom({
   matchId,
   myId,
   userLow,
+  otherId,
   other,
   matchCreatedAt,
   initialContacts,
@@ -44,6 +46,7 @@ export function ChatRoom({
   matchId: string;
   myId: string;
   userLow: string;
+  otherId: string;
   other: { handle: string; emoji: string };
   matchCreatedAt: string;
   initialContacts: Contact[];
@@ -446,6 +449,11 @@ export function ChatRoom({
             </span>
           </span>
         </button>
+        <SafetyMenu
+          targetId={otherId}
+          targetHandle={other.handle}
+          matchId={matchId}
+        />
       </div>
 
       {/* Curriculum progress gauge */}

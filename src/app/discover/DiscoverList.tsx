@@ -12,6 +12,7 @@ import {
   formatHeight,
 } from "@/lib/onboarding-options";
 import type { Database } from "@/lib/supabase/database.types";
+import { SafetyMenu } from "@/components/SafetyMenu";
 import { sendLike } from "./actions";
 
 const label = (
@@ -220,6 +221,14 @@ export function DiscoverList({
                     &ldquo;{c.intro}&rdquo;
                   </p>
                 )}
+
+                <div className="mt-3 flex justify-end">
+                  <SafetyMenu
+                    targetId={c.candidate_id}
+                    targetHandle={c.handle}
+                    variant="text"
+                  />
+                </div>
 
                 {c.liked ? (
                   <div className="mt-5 rounded-full border-2 border-rose-200 py-3 text-center text-sm font-semibold text-rose-400 dark:border-rose-900 dark:text-rose-500">
