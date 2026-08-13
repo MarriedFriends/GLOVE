@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { isChatLive } from "@/lib/chat-time";
 import { MessageNotifier } from "@/components/MessageNotifier";
 import { NoonNotifier } from "@/components/NoonNotifier";
+import { PwaRegister } from "@/components/PwaRegister";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -20,6 +21,16 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Glove",
   description: "익명으로 만나는 대학생 소개팅 — Glove",
+  // Installed-app behavior on iOS (full screen, own icon, no Safari chrome).
+  appleWebApp: {
+    capable: true,
+    title: "Glove",
+    statusBarStyle: "default",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#f43f5e",
 };
 
 export default async function RootLayout({
@@ -74,6 +85,7 @@ export default async function RootLayout({
         {children}
         {notifiers}
         {noonNotifier}
+        <PwaRegister />
       </body>
     </html>
   );
